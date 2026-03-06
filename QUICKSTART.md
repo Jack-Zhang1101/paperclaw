@@ -164,9 +164,9 @@ crontab -e
 
 **每周五 10:00**：OpenClaw cron 触发 `generate_weekly_report_v2.py`，生成周报并发送邮件。
 
-**邮件收件人**：`1641949061@qq.com`, `1471317156@qq.com`, `2368071705@qq.com`
+**邮件收件人**：在 `.env` 中配置 `EMAIL_RECIPIENT`（支持逗号分隔多个收件人）
 
-**Obsidian 同步路径**：`/home/shibo/Documents/Obsidian Vault/PaperClaw/`
+**Obsidian 同步路径**：在 `.env` 中配置 `OBSIDIAN_VAULT`
 - 日报：`daily/YYYY-MM-DD.md`
 - 周报：`weekly/YYYY-MM-DD_weekly_report.md`
 
