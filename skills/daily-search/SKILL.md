@@ -1,15 +1,57 @@
 # Daily Paper Search Skill
 
 ## 功能描述
-每日自动检索 arXiv 最新论文，与已评估数据库去重，精选 Top N 论文待评估，发送每日检索摘要。
+每日自动检索 arXiv 最新论文，聚焦**人形机器人全身控制与感知控制**领域，与已评估数据库去重，精选 Top N 论文待评估，发送每日检索摘要。
+
+## 研究领域关键词
+
+### 全身控制（Whole-Body Control）
+- humanoid robot whole-body control
+- whole-body motion planning humanoid
+- whole-body locomotion manipulation
+- loco-manipulation humanoid
+- contact-rich whole-body control
+- model predictive control humanoid robot
+- hierarchical whole-body controller
+
+### 运动控制与步态（Locomotion）
+- humanoid robot locomotion
+- legged robot control reinforcement learning
+- bipedal robot walking running
+- humanoid robot agile locomotion
+- zero-shot sim-to-real humanoid
+- humanoid parkour climbing
+
+### 感知控制（Perception-Action）
+- visual-motor control humanoid
+- proprioception humanoid robot
+- sensorimotor learning robot
+- vision-based humanoid control
+- egocentric perception humanoid
+- tactile sensing humanoid manipulation
+- multimodal perception robot control
+
+### 学习与规划（Learning & Planning）
+- reinforcement learning humanoid robot
+- imitation learning whole-body control
+- motion retargeting humanoid
+- teleoperation humanoid robot
+- diffusion policy humanoid
+- transformer robot policy humanoid
+
+### 排除关键词（避免不相关领域）
+- epidemic, epidemiology
+- finance, economics
+- NLP, language model（非机器人应用）
+- autonomous driving（非人形机器人）
 
 ## 核心流程
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  20:00 Asia/Singapore 自动触发                              │
+│  09:00 Asia/Shanghai 自动触发                               │
 │       ↓                                                     │
-│  1. 批量搜索 arXiv (9组预设关键词，每组30篇)                │
+│  1. 批量搜索 arXiv (预设关键词，每组30篇)                   │
 │       ↓                                                     │
 │  2. 搜索结果去重 (ID + 标准化标题)                          │
 │       ↓                                                     │
@@ -23,9 +65,11 @@
 │       ↓                                                     │
 │  7. 生成待评估任务清单                                      │
 │       ↓                                                     │
-│  8. 发送如流消息摘要                                        │
+│  8. 同步 Obsidian 日报                                      │
 │       ↓                                                     │
-│  9. Agent 执行 paper-review 深度评估                        │
+│  9. Agent 执行 paper-review 深度评估（summary + scores）    │
+│       ↓                                                     │
+│  10. 📧 发送深度评估邮件（send_daily_evaluation_email.py） │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -66,6 +110,7 @@ python skills/daily-search/scripts/daily_paper_search.py --dry-run
 | 待评估清单 | `pending_evaluation_YYYY-MM-DD.json` | Agent 待执行的评估任务 |
 | 论文元数据 | `papers/{short_title}/metadata.json` | 每篇精选论文的基础信息 |
 | 论文 PDF | `papers/{short_title}/*.pdf` | 下载的论文 PDF |
+| Obsidian 日报 | `$OBSIDIAN_VAULT/PaperClaw/daily/YYYY-MM-DD.md` | 同步到 Obsidian |
 
 ## 后续评估流程
 
@@ -109,6 +154,20 @@ python skills/paper-review/scripts/update_registry.py \
 cat workspace/papers/evaluated_papers.json | python -m json.tool | tail -20
 ```
 
+### 步骤 4: 发送深度评估邮件
+
+所有论文评估完成后，发送包含完整摘要和四维评分的邮件：
+
+```bash
+python skills/daily-search/scripts/send_daily_evaluation_email.py \
+  --workspace ~/.paperclaw/workspace
+```
+
+邮件内容包含：
+- 每篇论文的完整总结（`summary.md`）
+- 四维评分详情（`scores.md`）
+- arXiv 链接
+
 ## 定时任务配置
 
 ### OpenClaw Cron 配置
@@ -117,15 +176,15 @@ cat workspace/papers/evaluated_papers.json | python -m json.tool | tail -20
 
 ```json
 {
-  "name": "Daily Paper Search",
+  "name": "Daily Paper Search - Humanoid Robot Control",
   "schedule": {
     "kind": "cron",
-    "expr": "0 20 * * *",
-    "tz": "Asia/Singapore"
+    "expr": "0 9 * * *",
+    "tz": "Asia/Shanghai"
   },
   "payload": {
     "kind": "agentTurn",
-    "message": "执行每日论文检索任务：运行 daily_paper_search.py 搜索最新论文，然后对精选的 Top 3 论文执行完整的 paper-review 流程（总结、评分、更新数据库）"
+    "message": "执行每日论文检索任务：检索人形机器人全身控制与感知控制领域的最新论文，然后对精选的 Top 3 论文执行完整的 paper-review 流程（总结、评分、更新数据库）"
   },
   "sessionTarget": "isolated"
 }
@@ -137,8 +196,8 @@ cat workspace/papers/evaluated_papers.json | python -m json.tool | tail -20
 # 编辑 crontab
 crontab -e
 
-# 添加定时任务 (20:00 Asia/Singapore = 12:00 UTC)
-0 12 * * * cd /home/gem/.openclaw && python skills/daily-search/scripts/daily_paper_search.py >> /var/log/daily_paper_search.log 2>&1
+# 添加定时任务 (09:00 Asia/Shanghai = 01:00 UTC)
+0 1 * * * cd /path/to/PaperClaw && python skills/daily-search/scripts/daily_paper_search.py >> /var/log/daily_paper_search.log 2>&1
 ```
 
 ## 去重机制说明
@@ -162,15 +221,19 @@ crontab -e
 ## 注意事项
 
 1. **API 限制**: arXiv API 有请求频率限制，脚本已设置 3 秒延迟
-2. **网络依赖**: PDF 下载和如流消息发送需要网络连接
+2. **网络依赖**: PDF 下载和邮件发送需要网络连接
 3. **评估时间**: 深度评估每篇论文需要 Agent 投入时间，建议每日精选 3 篇
 4. **存储空间**: PDF 文件会占用存储空间，定期清理旧论文
 
 ## 更新日志
 
+### v2.0 (2026-03-05)
+- ✅ 研究领域切换为人形机器人全身控制与感知控制
+- ✅ 新增 Obsidian 日报同步
+- ✅ 新增邮件发送支持
+
 ### v1.0 (2026-03-04)
 - ✅ 初始版本
 - ✅ 批量搜索与去重
 - ✅ PDF 下载
-- ✅ 如流消息发送
 - ✅ 待评估任务清单生成

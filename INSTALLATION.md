@@ -100,20 +100,14 @@ cp .env.example .env
 nano .env  # 或使用你喜欢的编辑器
 ```
 
-填写以下必需的环境变量：
+填写以下可选的环境变量：
 
 ```bash
-# 百度智能云 API Key（必需）
-BAIDU_API_KEY=your_baidu_api_key_here
-
-# Comate Auth Token（必需）
-COMATE_AUTH_TOKEN=your_comate_token_here
-
-# SerpAPI Key（可选）
+# SerpAPI Key（可选，用于 Google Scholar 搜索）
 SERPAPI_KEY=your_serpapi_key_here
 
-# 百度地图 API Key（可选）
-BAIDU_MAP_AK=your_baidu_map_ak_here
+# Semantic Scholar API Key（可选，提高速率限制）
+SEMANTIC_SCHOLAR_API_KEY=your_semantic_scholar_api_key_here
 ```
 
 #### 步骤 5: 部署 Agent 到 OpenClaw
@@ -130,22 +124,7 @@ cp -r skills/* ~/.openclaw/agents/surrogate-modeling-expert/skills/
 openclaw agent list
 ```
 
-#### 步骤 6: 配置知识库和如流消息
-
-编辑 `~/.openclaw/agents/surrogate-modeling-expert/skills/weekly-report/scripts/generate_weekly_report_v2.py`：
-
-```python
-# 找到以下配置项并修改
-
-# 知识库配置
-self.ku_repo_id = "your_repository_guid"  # 替换为你的知识库ID
-self.ku_parent_doc_id = "your_parent_doc_guid"  # 替换为你的父文档ID
-
-# 如流消息接收人
-self.recipients = ["your_username"]  # 替换为你的如流用户名
-```
-
-#### 步骤 7: 配置定时任务
+#### 步骤 6: 配置定时任务
 
 ```bash
 # 配置每日论文检索（每天 21:00）
@@ -183,6 +162,8 @@ openclaw cron add << 'EOF'
   "enabled": true
 }
 EOF
+
+
 
 # 验证定时任务
 openclaw cron list
@@ -229,26 +210,17 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-#### 步骤 4: 配置环境变量
+#### 步骤 4: 配置环境变量（可选）
 
 ```bash
-# 创建 .env 文件
+# 创建 .env 文件（可选）
 cat > ~/.openclaw/.env << 'EOF'
-BAIDU_API_KEY=your_baidu_api_key_here
-COMATE_AUTH_TOKEN=your_comate_token_here
 SERPAPI_KEY=your_serpapi_key_here
-BAIDU_MAP_AK=your_baidu_map_ak_here
+SEMANTIC_SCHOLAR_API_KEY=your_semantic_scholar_api_key_here
 EOF
-
-# 编辑 .env 文件
-nano ~/.openclaw/.env
 ```
 
-#### 步骤 5: 配置知识库和如流消息
-
-同方式 1 的步骤 6。
-
-#### 步骤 6: 配置定时任务
+#### 步骤 5: 配置定时任务
 
 同方式 1 的步骤 7。
 
@@ -310,10 +282,8 @@ services:
       - ./logs:/app/logs
       - ./config:/app/config
     environment:
-      - BAIDU_API_KEY=${BAIDU_API_KEY}
-      - COMATE_AUTH_TOKEN=${COMATE_AUTH_TOKEN}
       - SERPAPI_KEY=${SERPAPI_KEY}
-      - BAIDU_MAP_AK=${BAIDU_MAP_AK}
+      - SEMANTIC_SCHOLAR_API_KEY=${SEMANTIC_SCHOLAR_API_KEY}
     restart: unless-stopped
     # ports:
     #   - "8080:8080"
@@ -390,90 +360,28 @@ pip install flask
 
 ### 环境变量说明
 
-创建 `.env` 文件：
+创建 `.env` 文件（所有变量均为可选）：
 
 ```bash
-# 百度智能云 API Key（必需）
-# 用于访问百度智能云 API 服务
-BAIDU_API_KEY=your_baidu_api_key_here
-
-# Comate Auth Token（必需）
-# 用于访问百度知识库和如流消息
-COMATE_AUTH_TOKEN=your_comate_token_here
-
-# SerpAPI Key（可选）
-# 用于 Google Scholar 搜索
+# SerpAPI Key（可选，用于 Google Scholar 搜索）
 SERPAPI_KEY=your_serpapi_key_here
 
-# 百度地图 API Key（可选）
-# 用于百度地图服务
-BAIDU_MAP_AK=your_baidu_map_ak_here
+# Semantic Scholar API Key（可选，提高速率限制）
+SEMANTIC_SCHOLAR_API_KEY=your_semantic_scholar_api_key_here
 ```
 
 ### 获取 API Key 的方法
 
-#### BAIDU_API_KEY
-
-1. 访问 https://cloud.baidu.com/
-2. 登录百度账号
-3. 进入控制台
-4. 创建应用
-5. 获取 API Key
-
-#### COMATE_AUTH_TOKEN
-
-1. 联系你的百度内部管理员
-2. 或从现有的百度内部工具中获取
-3. Token 格式：`Bearer-eyJ0eXAiOiJKV1QiLCJhbGc...`
-
-#### SERPAPI_KEY
+#### SERPAPI_KEY（可选）
 
 1. 访问 https://serpapi.com/
 2. 注册账号
-3. 进入控制台
-4. 获取 API Key
+3. 进入控制台获取 API Key（免费套餐 100次/月）
 
-#### BAIDU_MAP_AK
+#### SEMANTIC_SCHOLAR_API_KEY（可选）
 
-1. 访问 https://lbsyun.baidu.com/
-2. 登录百度账号
-3. 创建应用
-4. 选择 Web 服务 API
-5. 获取 AK（Access Key）
-
-### 知识库配置
-
-编辑 `~/.openclaw/agents/surrogate-modeling-expert/skills/weekly-report/scripts/generate_weekly_report_v2.py`：
-
-```python
-# 知识库配置
-self.ku_repo_id = "your_repository_guid"  # 你的知识库ID
-self.ku_parent_doc_id = "your_parent_doc_guid"  # 你的父文档ID
-```
-
-**获取知识库 ID**：
-
-1. 访问百度知识库 https://ku.baidu-int.com/
-2. 进入你的知识库
-3. 查看浏览器地址栏
-4. URL 格式：`https://ku.baidu-int.com/knowledge/HFVrC7hq1Q/pKzJfZczuc/qv-vZnw7HE/jnGipY319RaSyz`
-   - `qv-vZnw7HE` 是 repositoryGuid（知识库ID）
-   - `jnGipY319RaSyz` 是 parent_doc_guid（父文档ID）
-
-### 如流消息配置
-
-编辑 `~/.openclaw/agents/surrogate-modeling-expert/skills/weekly-report/scripts/generate_weekly_report_v2.py`：
-
-```python
-# 如流消息接收人
-self.recipients = ["username1", "username2"]  # 替换为你的用户名
-```
-
-**获取如流用户名**：
-
-1. 登录如流 https://so.baidu-int.com/
-2. 查看个人资料
-3. 用户名通常是拼音或工号
+1. 访问 https://www.semanticscholar.org/product/api
+2. 注册后免费申请
 
 ---
 
@@ -499,17 +407,6 @@ ls ~/.openclaw/agents/surrogate-modeling-expert/skills/
 # paper-review/
 # weekly-report/
 # semantic-scholar/
-```
-
-### 验证环境变量
-
-```bash
-# 检查环境变量是否设置
-echo $BAIDU_API_KEY
-echo $COMATE_AUTH_TOKEN
-
-# 或查看 .env 文件
-cat ~/.openclaw/.env
 ```
 
 ### 验证定时任务

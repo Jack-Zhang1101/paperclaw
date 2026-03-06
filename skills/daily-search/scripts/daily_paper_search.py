@@ -20,8 +20,28 @@ import json
 import argparse
 import urllib.request
 import re
+import smtplib
 from datetime import datetime
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from pathlib import Path
+
+# 自动加载 .env 文件（从项目根目录向上查找）
+def _load_dotenv():
+    search = Path(__file__).resolve()
+    for _ in range(6):
+        env_file = search / ".env"
+        if env_file.exists():
+            with open(env_file) as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        os.environ.setdefault(k.strip(), v.strip())
+            break
+        search = search.parent
+
+_load_dotenv()
 
 # 添加技能路径
 SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -40,16 +60,25 @@ class DailyPaperSearcher:
             self.workspace_dir = Path(workspace_path)
         else:
             self.workspace_dir = Path("/home/gem/.openclaw/workspace/3d_surrogate_proj")
-        
+
         self.papers_dir = self.workspace_dir / "papers"
         self.papers_dir.mkdir(parents=True, exist_ok=True)
-        
+
         self.evaluated_file = self.papers_dir / "evaluated_papers.json"
         self.search_logs_dir = self.workspace_dir / "search_logs"
         self.search_logs_dir.mkdir(parents=True, exist_ok=True)
-        
+
+        # Obsidian 配置
+        obsidian_vault = os.environ.get("OBSIDIAN_VAULT", "")
+        self.obsidian_daily_dir = Path(obsidian_vault) / "PaperClaw" / "daily" if obsidian_vault else None
+
         # 如流消息接收人
         self.recipients = ["guhaohao"]
+        # 邮件配置（与 weekly-report 保持一致，支持逗号分隔多收件人）
+        self.email_sender = os.environ.get("EMAIL_SENDER", "")
+        self.email_password = os.environ.get("EMAIL_APP_PASSWORD", "")
+        recipients_str = os.environ.get("EMAIL_RECIPIENT", "")
+        self.email_recipients = [r.strip() for r in recipients_str.split(",") if r.strip()]
         
     def load_evaluated_papers(self):
         """加载已评估论文列表（用于去重）"""
@@ -60,8 +89,9 @@ class DailyPaperSearcher:
             with open(self.evaluated_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
-            evaluated_ids = {p.get('arxiv_id', '') for p in data.get('papers', [])}
-            evaluated_titles = {p.get('title', '').lower().strip() for p in data.get('papers', [])}
+            papers_list = data.get('papers', data.get('evaluated_papers', []))
+            evaluated_ids = {p.get('arxiv_id', '') for p in papers_list}
+            evaluated_titles = {p.get('title', '').lower().strip() for p in papers_list}
             
             print(f"✅ 已加载 {len(evaluated_ids)} 篇已评估论文用于去重")
             return evaluated_ids, evaluated_titles
@@ -194,6 +224,216 @@ class DailyPaperSearcher:
         print(f"📝 搜索日志已保存: {log_path}")
         return log_path
     
+    # ─── 深度评估邮件相关方法 ────────────────────────────────────────
+
+    def load_today_papers(self, date_str):
+        """从 pending_evaluation_YYYY-MM-DD.json 读取今日待评估论文列表"""
+        task_file = self.workspace_dir / f"pending_evaluation_{date_str}.json"
+        if not task_file.exists():
+            print(f"❌ 未找到待评估清单: {task_file}")
+            return []
+        with open(task_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data.get("tasks", [])
+
+    def read_file(self, path):
+        p = Path(path)
+        if p.exists():
+            try:
+                return p.read_text(encoding="utf-8")
+            except Exception:
+                pass
+        return None
+
+    def read_metadata(self, paper_dir):
+        meta_path = Path(paper_dir) / "metadata.json"
+        if meta_path.exists():
+            try:
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
+
+    def build_evaluation_content(self, papers_data, date_str, truncate_summary=False):
+        """构建评估报告内容（Markdown 格式）"""
+        evaluated = [p for p in papers_data if p["summary"] or p["scores"]]
+        sections = []
+        sections.append(f"# 🤖 每日深度评估报告 - {date_str}")
+        sections.append(f"\n**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        sections.append(f"**今日评估**: {len(evaluated)} / {len(papers_data)} 篇\n")
+        sections.append("---")
+
+        for i, paper in enumerate(papers_data, 1):
+            title = paper.get("title", "Unknown")
+            arxiv_id = paper.get("arxiv_id", "")
+            summary = paper.get("summary")
+            scores = paper.get("scores")
+            meta = paper.get("metadata", {})
+            final_score = meta.get("scores", {}).get("final_score", "N/A") if meta else "N/A"
+
+            section = [f"\n## {i}. {title}"]
+            section.append(f"\n**arXiv**: https://arxiv.org/abs/{arxiv_id}")
+            if final_score != "N/A":
+                section.append(f"**综合评分**: {final_score}/10")
+
+            if scores:
+                section.append(f"\n### 四维评分\n\n{scores.strip()}")
+            else:
+                section.append("\n*⚠️ 评分详情未生成（paper-review 未完成）*")
+
+            if summary:
+                summary_text = summary.strip()
+                if truncate_summary and len(summary_text) > 1500:
+                    summary_text = summary_text[:1500] + "\n\n*[摘要已截断，完整内容见 Obsidian]*"
+                section.append(f"\n### 论文总结\n\n{summary_text}")
+            else:
+                section.append("\n*⚠️ 论文总结未生成（paper-review 未完成）*")
+
+            section.append("\n---")
+            sections.append("\n".join(section))
+
+        sections.append("\n\n*PaperClaw · Humanoid Robot Control Research*")
+        return "\n".join(sections)
+
+    def save_evaluation_to_obsidian(self, papers_data, date_str):
+        """将深度评估报告追加到 Obsidian 日报文件"""
+        if not self.obsidian_daily_dir:
+            print("⚠️  未配置 OBSIDIAN_VAULT，跳过 Obsidian 同步")
+            return None
+
+        self.obsidian_daily_dir.mkdir(parents=True, exist_ok=True)
+        obsidian_path = self.obsidian_daily_dir / f"{date_str}.md"
+        content = self.build_evaluation_content(papers_data, date_str, truncate_summary=False)
+
+        if obsidian_path.exists():
+            with open(obsidian_path, "a", encoding="utf-8") as f:
+                f.write(f"\n\n---\n\n## 📊 深度评估结果\n\n")
+                f.write(content)
+        else:
+            with open(obsidian_path, "w", encoding="utf-8") as f:
+                f.write(content)
+
+        print(f"✅ 深度评估已同步到 Obsidian: {obsidian_path}")
+        return obsidian_path
+
+    def send_evaluation_email(self, date_str=None, dry_run=False):
+        """读取今日 paper-review 结果，同步 Obsidian 并发送深度评估邮件"""
+        if date_str is None:
+            date_str = datetime.now().strftime("%Y-%m-%d")
+
+        print("=" * 60)
+        print(f"📧 每日深度评估邮件 - {date_str}")
+        print("=" * 60)
+
+        tasks = self.load_today_papers(date_str)
+        if not tasks:
+            print("❌ 无今日论文数据，退出")
+            return False
+
+        print(f"✅ 今日论文 {len(tasks)} 篇")
+        papers_data = []
+        for task in tasks:
+            short_title = task.get("short_title", "")
+            paper_dir = self.papers_dir / short_title
+            summary = self.read_file(paper_dir / "summary.md")
+            scores = self.read_file(paper_dir / "scores.md")
+            metadata = self.read_metadata(paper_dir)
+            papers_data.append({
+                "title": task.get("title", "Unknown"),
+                "arxiv_id": task.get("arxiv_id", ""),
+                "short_title": short_title,
+                "summary": summary,
+                "scores": scores,
+                "metadata": metadata,
+            })
+            status = "✅" if (summary and scores) else "⚠️ 未完成"
+            print(f"  {status} {task.get('title', '')[:55]}...")
+
+        print("\n📓 同步到 Obsidian...")
+        self.save_evaluation_to_obsidian(papers_data, date_str)
+
+        body = self.build_evaluation_content(papers_data, date_str, truncate_summary=True)
+        subject = f"[PaperClaw] 每日深度评估报告 - {date_str}"
+
+        if dry_run:
+            print("\n📧 [DRY-RUN] 邮件主题:", subject)
+            print("\n📧 [DRY-RUN] 邮件正文预览:")
+            print(body[:800] + "...")
+            return True
+
+        if not all([self.email_sender, self.email_password, self.email_recipients]):
+            print("⚠️  邮件配置不完整，请检查 .env 中的 EMAIL_SENDER / EMAIL_APP_PASSWORD / EMAIL_RECIPIENT")
+            return False
+
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = subject
+            msg["From"] = self.email_sender
+            msg["To"] = ", ".join(self.email_recipients)
+            msg.attach(MIMEText(body, "plain", "utf-8"))
+
+            with smtplib.SMTP("smtp.gmail.com", 587, timeout=30) as server:
+                server.ehlo()
+                server.starttls()
+                server.login(self.email_sender, self.email_password)
+                server.sendmail(self.email_sender, self.email_recipients, msg.as_string())
+
+            print(f"\n✅ 深度评估邮件发送成功: {', '.join(self.email_recipients)}")
+            return True
+        except smtplib.SMTPAuthenticationError:
+            print("❌ Gmail 认证失败，请检查 EMAIL_APP_PASSWORD（需要应用专用密码）")
+            return False
+        except Exception as e:
+            print(f"❌ 邮件发送失败: {e}")
+            return False
+
+    # ─── 每日检索 Obsidian 同步 ─────────────────────────────────────
+
+    def save_to_obsidian(self, search_stats, selected_papers):
+        """保存每日检索报告到 Obsidian"""
+        if not self.obsidian_daily_dir:
+            print("⚠️  未配置 OBSIDIAN_VAULT，跳过 Obsidian 同步")
+            return None
+
+        self.obsidian_daily_dir.mkdir(parents=True, exist_ok=True)
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        obsidian_path = self.obsidian_daily_dir / f"{date_str}.md"
+
+        paper_lines = []
+        for i, paper in enumerate(selected_papers, 1):
+            relevance = paper.get('relevance_score', 0)
+            arxiv_id = paper.get('arxiv_id', 'N/A')
+            paper_lines.append(
+                f"### {i}. {paper['title']}\n\n"
+                f"- **arXiv**: https://arxiv.org/abs/{arxiv_id}\n"
+                f"- **相关性评分**: {relevance}\n"
+                f"- **摘要**: {paper.get('summary', '')[:300]}...\n"
+            )
+
+        content = f"""# 每日论文检索报告 - {date_str}
+
+## 检索统计
+
+- 批量搜索论文数: {search_stats['total_searched']}
+- 去重后论文数: {search_stats['after_dedup']}
+- 已评估跳过: {search_stats['skipped_evaluated']}
+- 今日精选: {search_stats['selected_count']} 篇
+
+## 今日精选论文 (Top {len(selected_papers)})
+
+{chr(10).join(paper_lines)}
+---
+
+*Surrogate-Modeling Expert Agent*
+*检索时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}*
+"""
+
+        with open(obsidian_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+        print(f"✅ 日报已同步到 Obsidian: {obsidian_path}")
+        return obsidian_path
+
     def generate_evaluation_task(self, selected_papers):
         """生成待评估任务清单（供 Agent 执行）"""
         task_date = datetime.now().strftime("%Y-%m-%d")
@@ -218,11 +458,10 @@ class DailyPaperSearcher:
         print(f"?? 待评估任务清单已生成: {task_path}")
         return task_path, tasks
     
-    def send_daily_summary(self, search_stats, selected_papers, dry_run=False):
-        """发送每日检索摘要如流消息"""
+    def build_daily_summary_message(self, search_stats, selected_papers):
+        """构建每日检索摘要消息体"""
         date_str = datetime.now().strftime("%Y-%m-%d")
-        
-        message = f"""📚 **每日论文检索报告** - {date_str}
+        return f"""📚 **每日论文检索报告** - {date_str}
 
 🔍 **检索统计**:
 - 批量搜索论文数: {search_stats['total_searched']}
@@ -245,7 +484,11 @@ class DailyPaperSearcher:
 ---
 *Surrogate-Modeling Expert Agent*
 *检索时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}*"""
-        
+
+    def send_daily_summary(self, search_stats, selected_papers, dry_run=False):
+        """发送每日检索摘要如流消息"""
+        message = self.build_daily_summary_message(search_stats, selected_papers)
+
         if dry_run:
             print("\n📨 [DRY-RUN] 如流消息内容:")
             print("-" * 50)
@@ -277,6 +520,45 @@ class DailyPaperSearcher:
             return False
         except Exception as e:
             print(f"❌ 发送如流消息异常: {e}")
+            return False
+
+    def send_daily_email(self, search_stats, selected_papers, dry_run=False):
+        """通过 Gmail SMTP 发送每日报告邮件"""
+        subject = f"[PaperClaw] 每日论文检索报告 - {datetime.now().strftime('%Y-%m-%d')}"
+        body = self.build_daily_summary_message(search_stats, selected_papers)
+
+        if dry_run:
+            print("\n📧 [DRY-RUN] 邮件主题:")
+            print(subject)
+            print("\n📧 [DRY-RUN] 邮件正文预览:")
+            print(body[:500] + "...")
+            return True
+
+        if not all([self.email_sender, self.email_password, self.email_recipients]):
+            print("⚠️  邮件配置不完整，跳过邮件发送")
+            print("   需要环境变量: EMAIL_SENDER, EMAIL_APP_PASSWORD, EMAIL_RECIPIENT")
+            return False
+
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = subject
+            msg["From"] = self.email_sender
+            msg["To"] = ', '.join(self.email_recipients)
+            msg.attach(MIMEText(body, "plain", "utf-8"))
+
+            with smtplib.SMTP("smtp.gmail.com", 587, timeout=30) as server:
+                server.ehlo()
+                server.starttls()
+                server.login(self.email_sender, self.email_password)
+                server.sendmail(self.email_sender, self.email_recipients, msg.as_string())
+
+            print(f"✅ 每日报告邮件发送成功: {', '.join(self.email_recipients)}")
+            return True
+        except smtplib.SMTPAuthenticationError:
+            print("❌ 邮件认证失败，请检查 EMAIL_APP_PASSWORD（Gmail 应用专用密码）")
+            return False
+        except Exception as e:
+            print(f"❌ 邮件发送失败: {e}")
             return False
     
     def run(self, top_n=3, skip_download=False, dry_run=False):
@@ -345,9 +627,13 @@ class DailyPaperSearcher:
         # 生成待评估任务清单
         task_path, tasks = self.generate_evaluation_task(selected_papers)
         
-        # 发送每日摘要
-        print("\n📨 发送每日检索摘要...")
-        self.send_daily_summary(search_stats, selected_papers, dry_run)
+        # 保存到 Obsidian
+        print("\n📓 同步到 Obsidian...")
+        self.save_to_obsidian(search_stats, selected_papers)
+
+        # 邮件在 paper-review 完成后由 send_daily_evaluation_email.py 统一发送
+        print("\n📋 检索完成，待评估清单已生成。")
+        print("   💡 请执行 paper-review 后运行 send_daily_evaluation_email.py 发送深度评估邮件")
         
         print("\n" + "=" * 60)
         print("✅ 每日论文检索任务完成！")
@@ -366,15 +652,23 @@ def main():
     parser.add_argument('--skip-download', action='store_true', help='跳过PDF下载')
     parser.add_argument('--dry-run', action='store_true', help='仅搜索，不下载不发送')
     parser.add_argument('--workspace', type=str, help='工作空间路径')
-    
+    parser.add_argument('--send-evaluation', action='store_true',
+                        help='发送深度评估邮件（在 paper-review 完成后调用）')
+    parser.add_argument('--date', type=str, default=datetime.now().strftime("%Y-%m-%d"),
+                        help='报告日期，格式 YYYY-MM-DD（默认今天）')
+
     args = parser.parse_args()
-    
+
     searcher = DailyPaperSearcher(workspace_path=args.workspace)
-    searcher.run(
-        top_n=args.top,
-        skip_download=args.skip_download,
-        dry_run=args.dry_run
-    )
+
+    if args.send_evaluation:
+        searcher.send_evaluation_email(date_str=args.date, dry_run=args.dry_run)
+    else:
+        searcher.run(
+            top_n=args.top,
+            skip_download=args.skip_download,
+            dry_run=args.dry_run
+        )
 
 
 if __name__ == "__main__":

@@ -1,71 +1,92 @@
 #!/usr/bin/env python3
 """
-周报生成与发送脚本 v2.2
+周报生成与邮件发送脚本 v3.0
 功能：
 1. 从 evaluated_papers.json 读取基础信息和最终评分
 2. 从 papers/{short_title}/scores.md 读取四维评分详情
 3. 从 papers/{short_title}/summary.md 读取完整总结
 4. 从 papers/{short_title}/metadata.json 读取关键词等元信息
 5. 按综合评分排序，筛选 Top 3 精选论文
-6. 为每篇精选论文创建独立知识库文档
-7. 生成 Markdown 周报
-8. 创建周报知识库文档
-9. 发送如流消息（包含知识库链接）
+6. 生成 Markdown 周报并保存到本地
+7. 通过邮件发送周报
 
-数据源设计（2026-03-02 优化）：
-- evaluated_papers.json: 基础信息 + 最终评分（去重检查用）
-- papers/{short_title}/scores.md: 四维评分详情
-- papers/{short_title}/summary.md: 完整论文总结
-- papers/{short_title}/metadata.json: 关键词等元信息
+配置环境变量（~/.bashrc 或 .env）：
+    EMAIL_SENDER=your_gmail@gmail.com
+    EMAIL_APP_PASSWORD=your_app_password   # Gmail 应用专用密码
+    EMAIL_RECIPIENT=your_email@example.com # 收件人邮箱
+
+Gmail App Password 获取方式：
+    1. 访问 https://myaccount.google.com/security
+    2. 开启两步验证
+    3. 搜索 "App passwords" 生成专用密码（16位）
 """
 import os
 import sys
 import json
+import smtplib
 from datetime import datetime, timedelta
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from pathlib import Path
 
-# 添加技能路径
-sys.path.insert(0, '/home/gem/.openclaw/skills/ku-doc-manage/scripts')
-sys.path.insert(0, '/home/gem/.openclaw/skills/so-send-message/scripts')
+# 自动加载 .env 文件（从项目根目录向上查找）
+def _load_dotenv():
+    search = Path(__file__).resolve()
+    for _ in range(6):
+        env_file = search / ".env"
+        if env_file.exists():
+            with open(env_file) as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        os.environ.setdefault(k.strip(), v.strip())
+            break
+        search = search.parent
 
-from ku_api_client import KuApiClient
-from send_message import GroupMessageSender
+_load_dotenv()
 
 
 class WeeklyReportGenerator:
-    """周报生成器 v2.0"""
-    
+    """周报生成器 v3.0"""
+
     def __init__(self):
-        self.workspace_dir = Path("/home/gem/.openclaw/workspace/3d_surrogate_proj")
-        # 使用统一的数据文件（包含完整评分数据）
+        self.workspace_dir = Path(
+            os.environ.get(
+                "PAPERCLAW_WORKSPACE",
+                Path.home() / ".paperclaw" / "workspace"
+            )
+        )
         self.papers_file = self.workspace_dir / "papers" / "evaluated_papers.json"
         self.reports_dir = self.workspace_dir / "weekly_reports"
         self.reports_dir.mkdir(parents=True, exist_ok=True)
-        
-        # 知识库配置
-        self.ku_repo_id = "qv-vZnw7HE"
-        self.ku_parent_doc_id = "jnGipY319RaSyz"
-        
-        # 如流消息接收人
-        self.recipients = ["guhaohao"]
-        
+
+        # Obsidian 配置
+        obsidian_vault = os.environ.get("OBSIDIAN_VAULT", "")
+        self.obsidian_weekly_dir = Path(obsidian_vault) / "PaperClaw" / "weekly" if obsidian_vault else None
+
+        # 邮件配置（从环境变量读取，支持逗号分隔多收件人）
+        self.email_sender = os.environ.get("EMAIL_SENDER", "")
+        self.email_password = os.environ.get("EMAIL_APP_PASSWORD", "")
+        recipients_str = os.environ.get("EMAIL_RECIPIENT", "")
+        self.email_recipients = [r.strip() for r in recipients_str.split(",") if r.strip()]
+
     def load_evaluated_papers(self):
-        """加载已评估论文（从统一数据文件 - 获取基础信息和最终评分）"""
+        """加载已评估论文"""
         if not self.papers_file.exists():
             print(f"❌ 论文数据文件不存在: {self.papers_file}")
             return []
-        
+
         with open(self.papers_file, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        
-        papers = data.get('papers', [])
-        print(f"✅ 加载 {len(papers)} 篇论文（基础信息）")
+
+        papers = data.get('papers', data.get('evaluated_papers', []))
+        print(f"✅ 加载 {len(papers)} 篇论文")
         return papers
-    
+
     def filter_week_papers(self, papers, days=7):
         """筛选最近N天的论文"""
         week_start = datetime.now() - timedelta(days=days)
-        
         week_papers = []
         for paper in papers:
             try:
@@ -77,15 +98,17 @@ class WeeklyReportGenerator:
                     week_papers.append(paper)
             except (ValueError, TypeError) as e:
                 print(f"⚠️  日期解析失败: {paper.get('short_title', 'Unknown')} - {e}")
-                continue
-        
         return week_papers
-    
+
     def sort_and_select_top(self, papers, top_n=3):
         """按综合评分排序并选择Top N"""
-        sorted_papers = sorted(papers, key=lambda x: x.get('scores', {}).get('final_score', 0), reverse=True)
+        sorted_papers = sorted(
+            papers,
+            key=lambda x: x.get('scores', {}).get('final_score', 0),
+            reverse=True
+        )
         return sorted_papers[:top_n]
-    
+
     def read_summary_file(self, short_title):
         """读取论文的完整 summary.md 内容"""
         summary_file = self.workspace_dir / "papers" / short_title / "summary.md"
@@ -95,9 +118,8 @@ class WeeklyReportGenerator:
                     return f.read()
             except Exception as e:
                 print(f"⚠️  读取 summary.md 失败 {short_title}: {e}")
-                return None
         return None
-    
+
     def read_scores_file(self, short_title):
         """读取论文的 scores.md 内容（四维评分详情）"""
         scores_file = self.workspace_dir / "papers" / short_title / "scores.md"
@@ -107,11 +129,10 @@ class WeeklyReportGenerator:
                     return f.read()
             except Exception as e:
                 print(f"⚠️  读取 scores.md 失败 {short_title}: {e}")
-                return None
         return None
-    
+
     def read_metadata_file(self, short_title):
-        """读取论文的 metadata.json 内容（关键词等元信息）"""
+        """读取论文的 metadata.json 内容"""
         metadata_file = self.workspace_dir / "papers" / short_title / "metadata.json"
         if metadata_file.exists():
             try:
@@ -119,30 +140,20 @@ class WeeklyReportGenerator:
                     return json.load(f)
             except Exception as e:
                 print(f"⚠️  读取 metadata.json 失败 {short_title}: {e}")
-                return None
         return None
-    
-    def generate_report_markdown(self, papers, all_week_papers, report_date, summary_doc_urls=None):
+
+    def generate_report_markdown(self, papers, all_week_papers, report_date):
         """生成Markdown格式的周报"""
         week_start = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
-        week_end = report_date
-        
-        # 生成论文列表（Top 3）- 从多个文件读取数据
+
         paper_list = []
         for i, paper in enumerate(papers, 1):
             short_title = paper.get('short_title', '')
-            
-            # 从 scores.md 读取四维评分详情
             scores_content = self.read_scores_file(short_title)
-            
-            # 从 metadata.json 读取关键词
             metadata = self.read_metadata_file(short_title)
             keywords = metadata.get('keywords', []) if metadata else paper.get('keywords', [])
-            
-            # 从 evaluated_papers.json 获取基础信息和最终评分
-            scores = paper.get('scores', {})
-            final_score = scores.get('final_score', 0)
-            
+            final_score = paper.get('scores', {}).get('final_score', 0)
+
             paper_entry = f"""### {i}. {paper.get('title', 'Unknown')}
 
 **综合评分**: {final_score:.2f}/10
@@ -150,55 +161,40 @@ class WeeklyReportGenerator:
 **四维评分详情**:
 {scores_content if scores_content else '*评分详情暂缺*'}
 
-**关键词**:  
-{', '.join(keywords)}
+**关键词**: {', '.join(keywords)}
 
-**arXiv链接**: [{paper.get('arxiv_id', 'N/A')}](https://arxiv.org/abs/{paper.get('arxiv_id', '')})
+**arXiv链接**: https://arxiv.org/abs/{paper.get('arxiv_id', '')}
 
 ---"""
             paper_list.append(paper_entry)
-        
-        # 生成评分表格（Top 5）- 优化：从 metadata.json 安全读取四维评分
+
         table_rows = []
         for paper in all_week_papers[:5]:
             short_title = paper.get('short_title', '')
             title = paper.get('title', 'Unknown')
             if len(title) > 30:
                 title = title[:30] + "..."
-            
-            # 从 evaluated_papers.json 获取最终评分
-            scores = paper.get('scores', {})
-            final_score = scores.get('final_score', 0)
-            
-            # 优化：从 metadata.json 安全读取四维评分，彻底废除脆弱的正则提取
+            final_score = paper.get('scores', {}).get('final_score', 0)
+
             metadata = self.read_metadata_file(short_title)
             if metadata and 'scores' in metadata:
-                scores_data = metadata['scores']
-                eng = str(scores_data.get('engineering_value', 'N/A'))
-                arch = str(scores_data.get('architecture_innovation', 'N/A'))
-                theo = str(scores_data.get('theoretical_contribution', 'N/A'))
-                rel = str(scores_data.get('result_reliability', 'N/A'))
-                imp = str(scores_data.get('impact', 'N/A'))
+                s = metadata['scores']
+                eng = str(s.get('engineering_value', 'N/A'))
+                arch = str(s.get('architecture_innovation', 'N/A'))
+                theo = str(s.get('theoretical_contribution', 'N/A'))
+                rel = str(s.get('result_reliability', 'N/A'))
+                imp = str(s.get('impact', 'N/A'))
             else:
                 eng = arch = theo = rel = imp = "N/A"
-            
-            row = f"| {title} | {eng} | {arch} | {theo} | {rel} | {imp} | {final_score:.2f} |"
-            table_rows.append(row)
-        
-        # 生成附录
-        appendix = "\n## 📎 附录：精选论文完整总结\n\n"
-        appendix += "> 以下三篇精选论文的完整总结已上传至知识库，点击链接查看：\n\n"
-        
-        if summary_doc_urls:
-            for i, doc_info in enumerate(summary_doc_urls, 1):
-                appendix += f"{i}. **{doc_info['title']}**: [查看完整总结]({doc_info['url']})\n\n"
-        else:
-            appendix += "*知识库文档链接将在创建后添加*\n\n"
-        
-        report = f"""# 📊 三维几何代理模型研究周报
 
-**报告周期**: {week_start} - {week_end}  
-**生成时间**: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}  
+            table_rows.append(
+                f"| {title} | {eng} | {arch} | {theo} | {rel} | {imp} | {final_score:.2f} |"
+            )
+
+        report = f"""# 🤖 人形机器人全身控制与感知控制研究周报
+
+**报告周期**: {week_start} - {report_date}
+**生成时间**: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 **报告人**: Surrogate-Modeling Expert Agent
 
 ---
@@ -216,7 +212,7 @@ class WeeklyReportGenerator:
 
 ## 📊 四维评分分布（Top 5）
 
-| 论文 | 工程应用 | 架构创新 | 理论贡献 | 可靠性 | 影响力 | 综合评分 |
+| 论文 | 控制性能 | 架构创新 | 理论贡献 | 可靠性 | 影响力 | 综合评分 |
 |------|---------|---------|---------|--------|--------|---------|
 {chr(10).join(table_rows)}
 
@@ -225,233 +221,118 @@ class WeeklyReportGenerator:
 ## 💡 研究建议
 
 ### 值得跟进的方向
-1. 几何感知神经算子在复杂几何域上的应用
-2. Transformer架构在PDE求解中的创新设计
-3. 物理信息神经网络与代理模型的融合
+1. 全身控制与操作（Loco-manipulation）的统一框架
+2. 基于视觉感知的闭环运动控制
+3. Sim-to-Real 迁移与领域自适应技术
 
 ### 工具与资源
-- 推荐关注 arXiv cs.LG 和 cs.NA 分类
-- 开源代码库持续跟踪
+- 推荐关注 arXiv cs.RO 和 cs.LG 分类
+- 开源代码库持续跟踪（IsaacGym / MuJoCo / Unitree）
 
-{appendix}
-*报告生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}*  
+---
+
+*报告生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}*
 *Surrogate-Modeling Expert Agent*"""
-        
+
         return report
-    
-    def generate_summary_markdown(self, paper):
-        """为单篇精选论文生成完整总结文档的Markdown内容"""
-        short_title = paper.get('short_title', '')
-        paper_title = paper.get('title', 'Unknown')
-        
-        # 从 evaluated_papers.json 获取基础信息和最终评分
-        scores = paper.get('scores', {})
-        final_score = scores.get('final_score', 0)
-        
-        # 从 scores.md 读取四维评分详情
-        scores_content = self.read_scores_file(short_title)
-        
-        # 从 summary.md 读取完整总结
-        summary_content = self.read_summary_file(short_title)
-        
-        # 从 metadata.json 读取关键词等元信息
-        metadata = self.read_metadata_file(short_title)
-        keywords = metadata.get('keywords', []) if metadata else []
-        
-        summary_doc = f"""# {paper_title}
 
-**arXiv ID**: {paper.get('arxiv_id', 'N/A')}  
-**综合评分**: {final_score:.2f}/10  
-**评估日期**: {paper.get('evaluated_date', 'N/A')}
+    def send_email(self, subject, body, report_path=None):
+        """通过 Gmail SMTP 发送邮件"""
+        if not all([self.email_sender, self.email_password, self.email_recipients]):
+            print("⚠️  邮件配置不完整，请设置环境变量:")
+            print("   EMAIL_SENDER, EMAIL_APP_PASSWORD, EMAIL_RECIPIENT")
+            print("\n📄 周报内容已保存到本地，跳过邮件发送")
+            return False
 
----
-
-## 四维评分详情
-
-{scores_content if scores_content else '*评分详情暂缺*'}
-
----
-
-## 关键词
-
-{', '.join(keywords)}
-
----
-
-## 完整论文总结
-
-{summary_content if summary_content else '*完整总结暂缺*'}
-
----
-
-*本文档由 Surrogate-Modeling Expert Agent 自动生成*  
-*生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}*"""
-        
-        return summary_doc
-    
-    def create_ku_document(self, title, content):
-        """创建知识库文档"""
         try:
-            client = KuApiClient()
-            
-            result = client.create_doc(
-                repository_guid=self.ku_repo_id,
-                creator_username="guhaohao",
-                title=title,
-                content=content,
-                parent_doc_guid=self.ku_parent_doc_id,
-                create_mode=2
-            )
-            
-            if result.get('returnCode') == 200:
-                doc_url = result.get('result', {}).get('url', '')
-                print(f"✅ 知识库文档创建成功: {doc_url}")
-                return doc_url
-            else:
-                error_msg = result.get('returnMessage', str(result))
-                print(f"⚠️  知识库文档创建失败: {error_msg}")
-                return None
-                
+            msg = MIMEMultipart('alternative')
+            msg['Subject'] = subject
+            msg['From'] = self.email_sender
+            msg['To'] = ', '.join(self.email_recipients)
+
+            # 纯文本正文
+            msg.attach(MIMEText(body, 'plain', 'utf-8'))
+
+            with smtplib.SMTP('smtp.gmail.com', 587, timeout=30) as server:
+                server.ehlo()
+                server.starttls()
+                server.login(self.email_sender, self.email_password)
+                server.sendmail(self.email_sender, self.email_recipients, msg.as_string())
+
+            print(f"✅ 邮件发送成功: {', '.join(self.email_recipients)}")
+            return True
+
+        except smtplib.SMTPAuthenticationError:
+            print("❌ Gmail 认证失败，请检查 EMAIL_APP_PASSWORD 是否为应用专用密码")
+            print("   获取方式: https://myaccount.google.com/apppasswords")
+            return False
         except Exception as e:
-            print(f"⚠️  创建知识库文档异常: {e}")
-            return None
-    
-    def send_ruliu_message(self, content, doc_url=None):
-        """发送如流消息"""
-        try:
-            sender = GroupMessageSender()
-            
-            if doc_url:
-                content += f"\n\n📎 **知识库链接**: {doc_url}"
-            
-            for user in self.recipients:
-                result = sender.send_app_message(
-                    to_users=user,
-                    msg_type="text",
-                    content=content
-                )
-                
-                if result.get('code') == 'ok':
-                    print(f"✅ 消息发送成功: {user}")
-                else:
-                    print(f"❌ 消息发送失败 {user}: {result}")
-                    
-        except Exception as e:
-            print(f"❌ 发送如流消息异常: {e}")
-    
+            print(f"❌ 邮件发送失败: {e}")
+            return False
+
     def generate_and_send(self):
         """生成周报并发送"""
         print("=" * 60)
-        print("📊 开始生成周报 v2.0...")
+        print("📊 开始生成周报 v3.0...")
         print("=" * 60)
-        
+
         # 1. 加载论文数据
         print("\n📖 加载已评估论文...")
         papers = self.load_evaluated_papers()
         if not papers:
             print("❌ 没有找到已评估的论文")
             return
-        
+
         # 2. 筛选本周论文
         print("\n📅 筛选本周论文...")
         week_papers = self.filter_week_papers(papers, days=7)
         print(f"✅ 本周评估 {len(week_papers)} 篇论文")
-        
+
         if not week_papers:
-            print("⚠️  本周没有评估新论文，使用历史数据")
+            print("⚠️  本周没有评估新论文，使用全部历史数据")
             week_papers = papers
-        
+
         # 3. 排序并选择Top 3精选论文
         print("\n🏆 筛选 Top 3 精选论文...")
         top_papers = self.sort_and_select_top(week_papers, top_n=3)
-        print(f"✅ 已选择 Top {len(top_papers)} 精选论文")
-        
         for i, paper in enumerate(top_papers, 1):
-            print(f"   {i}. {paper.get('title', 'Unknown')[:50]}... - {paper.get('scores', {}).get('final_score', 0):.2f}分")
-        
-        # 4. 为每篇精选论文创建独立的知识库文档
-        print("\n📚 为精选论文创建知识库文档...")
-        report_date = datetime.now().strftime("%Y-%m-%d")
-        summary_doc_urls = []
-        
-        for i, paper in enumerate(top_papers, 1):
-            paper_title = paper.get('title', 'Unknown')
-            short_title = paper.get('short_title', '')
-            
-            print(f"   [{i}/{len(top_papers)}] 创建文档: {paper_title[:50]}...")
-            
-            # 生成论文完整总结文档
-            summary_content = self.generate_summary_markdown(paper)
-            doc_title = f"[{report_date}] {short_title} - 论文总结"
-            
-            # 创建知识库文档
-            doc_url = self.create_ku_document(doc_title, summary_content)
-            
-            if doc_url:
-                summary_doc_urls.append({
-                    'title': paper_title,
-                    'url': doc_url
-                })
-            else:
-                # 如果创建失败，使用本地文件路径
-                summary_doc_urls.append({
-                    'title': paper_title,
-                    'url': f"../papers/{short_title}/summary.md"
-                })
-        
-        print(f"✅ 已创建 {len(summary_doc_urls)} 个论文总结文档")
-        
-        # 5. 生成周报Markdown（包含知识库链接）
+            score = paper.get('scores', {}).get('final_score', 0)
+            print(f"   {i}. {paper.get('title', 'Unknown')[:50]}... - {score:.2f}分")
+
+        # 4. 生成周报Markdown
         print("\n📝 生成周报内容...")
-        report_content = self.generate_report_markdown(top_papers, week_papers, report_date, summary_doc_urls)
-        
+        report_date = datetime.now().strftime("%Y-%m-%d")
+        report_content = self.generate_report_markdown(top_papers, week_papers, report_date)
+
         # 保存本地副本
         report_path = self.reports_dir / f"{report_date}_weekly_report.md"
         with open(report_path, 'w', encoding='utf-8') as f:
             f.write(report_content)
         print(f"✅ 周报已保存: {report_path}")
-        
-        # 6. 创建周报知识库文档
-        print("\n📚 创建周报知识库文档...")
-        doc_title = f"周报 - {report_date}"
-        doc_url = self.create_ku_document(doc_title, report_content)
-        
-        # 7. 发送如流消息
-        print("\n💬 发送如流消息...")
-        
-        # 生成简短消息
-        short_message = f"""📊 **三维几何代理模型研究周报** - {report_date}
 
-**报告周期**: {(datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")} - {report_date}
-**评估论文总数**: {len(week_papers)}
-**精选推荐**: Top {len(top_papers)}
+        # 保存到 Obsidian
+        if self.obsidian_weekly_dir:
+            self.obsidian_weekly_dir.mkdir(parents=True, exist_ok=True)
+            obsidian_path = self.obsidian_weekly_dir / f"{report_date}_weekly_report.md"
+            with open(obsidian_path, 'w', encoding='utf-8') as f:
+                f.write(report_content)
+            print(f"✅ 周报已同步到 Obsidian: {obsidian_path}")
+        else:
+            print("⚠️  未配置 OBSIDIAN_VAULT，跳过 Obsidian 同步")
 
-🏆 **本周Top 3精选论文**:
-"""
-        
-        for i, paper in enumerate(top_papers[:3], 1):
-            short_message += f"\n{i}. **{paper.get('title', 'Unknown')[:50]}...**\n"
-            short_message += f"   综合评分: {paper.get('scores', {}).get('final_score', 0):.2f}/10\n"
-        
-        short_message += f"\n📎 **周报链接**: {doc_url if doc_url else '知识库文档创建失败'}\n"
-        
-        # 添加精选论文总结链接
-        if summary_doc_urls:
-            short_message += "\n📄 **精选论文完整总结**:\n"
-            for i, doc_info in enumerate(summary_doc_urls, 1):
-                short_message += f"{i}. [{doc_info['title'][:40]}...]({doc_info['url']})\n"
-        
-        self.send_ruliu_message(short_message, doc_url)
-        
+        # 5. 发送邮件
+        print("\n📧 发送邮件...")
+        subject = f"🤖 人形机器人控制研究周报 - {report_date}"
+        self.send_email(subject, report_content, report_path)
+
         print("\n" + "=" * 60)
-        print("✅ 周报生成和发送完成！")
+        print("✅ 周报生成完成！")
         print("=" * 60)
-        
-        return report_path, doc_url, summary_doc_urls
+
+        return report_path
 
 
 def main():
-    """主函数"""
     generator = WeeklyReportGenerator()
     generator.generate_and_send()
 

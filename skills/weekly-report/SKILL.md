@@ -1,7 +1,7 @@
 # Weekly Report Generation Skill
 
 ## 功能描述
-基于本周评估的论文，生成每周精选报告，为精选论文创建独立知识库文档，并通过如流消息发送给指定用户。
+基于本周评估的论文，生成**人形机器人全身控制与感知控制**领域每周精选报告，通过邮件发送给指定用户，并同步到 Obsidian 知识库。
 
 ## 核心流程
 
@@ -38,98 +38,54 @@ week_papers.sort(key=lambda x: x['final_score'], reverse=True)
 top_papers = week_papers[:3]
 ```
 
-### 步骤3: 为精选论文创建独立知识库文档
+### 步骤3: 生成 Markdown 周报
 
-**重要更新**：每篇精选论文的完整总结单独创建知识库文档。
-
-```python
-# 为每篇精选论文创建独立的知识库文档
-for paper in top_papers:
-    # 生成论文完整总结文档
-    summary_content = generate_summary_markdown(paper)
-    doc_title = f"[{report_date}] {paper['short_title']} - 论文总结"
-    
-    # 创建知识库文档
-    doc_url = client.create_doc(
-        repository_guid="your_repository_guid",
-        creator_username="your_username",
-        title=doc_title,
-        content=summary_content,
-        parent_doc_guid="your_parent_doc_guid",
-        create_mode=2
-    )
-    
-    # 记录文档URL用于周报附录
-    summary_doc_urls.append({
-        'title': paper['title'],
-        'url': doc_url
-    })
-```
-
-### 步骤4: 生成 Markdown 周报
-
-基于四维评分系统生成周报，**附录只包含精选论文的知识库文档链接**：
+基于四维评分系统生成周报：
 
 ```markdown
-## 📎 附录：精选论文完整总结
+# 🤖 人形机器人全身控制与感知控制研究周报
 
-> 以下三篇精选论文的完整总结已上传至知识库，点击链接查看：
+**报告周期**: YYYY-MM-DD - YYYY-MM-DD
+**生成时间**: YYYY-MM-DD HH:MM:SS
 
-1. **论文标题**: [查看完整总结](知识库链接)
-2. **论文标题**: [查看完整总结](知识库链接)
-3. **论文标题**: [查看完整总结](知识库链接)
+## 本周概览
+- 评估论文总数: N
+- 精选推荐论文: Top 3
+
+## 本周精选论文 Top 3
+...
+
+## 四维评分分布（Top 5）
+| 论文 | 控制性能 | 架构创新 | 理论贡献 | 可靠性 | 影响力 | 综合评分 |
 ```
 
-### 步骤5: 创建周报知识库文档
+### 步骤4: 保存与发送
 
-将周报本身也创建为知识库文档：
+1. 保存至本地 `weekly_reports/YYYY-MM-DD_weekly_report.md`
+2. 同步到 Obsidian `$OBSIDIAN_VAULT/PaperClaw/weekly/`
+3. 通过 Gmail SMTP 发送到配置的收件人邮箱
 
 ```python
-# 创建周报知识库文档
-result = client.create_doc(
-    repository_guid="your_repository_guid",
-    creator_username="your_username",
-    title=f"周报 - {report_date}",
-    content=report_content,
-    parent_doc_guid="your_parent_doc_guid",
-    create_mode=2
-)
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+
+msg = MIMEMultipart('alternative')
+msg['Subject'] = f"🤖 人形机器人控制研究周报 - {report_date}"
+msg['From'] = os.environ['EMAIL_SENDER']
+msg['To'] = os.environ['EMAIL_RECIPIENT']
+msg.attach(MIMEText(report_content, 'plain', 'utf-8'))
+
+with smtplib.SMTP('smtp.gmail.com', 587) as server:
+    server.starttls()
+    server.login(os.environ['EMAIL_SENDER'], os.environ['EMAIL_APP_PASSWORD'])
+    server.sendmail(msg['From'], msg['To'], msg.as_string())
 ```
 
-### 步骤6: 发送如流消息
-
-使用如流消息 API 发送周报给指定用户：
-
-```python
-from send_message import GroupMessageSender
-
-sender = GroupMessageSender()
-
-# 发送简短消息 + 周报链接 + 精选论文链接
-message = f"""
-📊 **三维几何代理模型研究周报** - {report_date}
-
-**报告周期**: {week_start} - {report_date}
-**评估论文总数**: {len(week_papers)}
-**精选推荐**: Top 3 精选论文
-
-🏆 **本周Top 3论文**:
-[论文列表]
-
-📎 **周报链接**: {doc_url}
-
-📄 **精选论文完整总结**:
-1. [论文1](链接1)
-2. [论文2](链接2)
-3. [论文3](链接3)
-"""
-
-result = sender.send_app_message(
-    to_users="your_username",
-    msg_type="text",
-    content=message
-)
-```
+**Gmail App Password 获取方式**：
+1. 访问 https://myaccount.google.com/security，开启两步验证
+2. 搜索 "App passwords"，生成 16 位专用密码
+3. 设置环境变量：`EMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx`
 
 ## 完整自动化脚本
 
@@ -140,10 +96,9 @@ result = sender.send_app_message(
 1. **加载论文数据**: 从 `evaluated_papers.json` 读取
 2. **筛选本周论文**: 最近7天评估的论文
 3. **排序选择**: 按综合评分排序，取 Top 3 精选论文
-4. **创建论文总结文档**: 为每篇精选论文创建独立知识库文档
-5. **生成周报**: Markdown格式，附录只包含知识库链接
-6. **创建周报文档**: 将周报创建为知识库文档
-7. **发送如流消息**: 推送简短消息 + 周报链接 + 论文总结链接
+4. **生成周报**: Markdown格式，保存到 `weekly_reports/` 目录
+5. **同步 Obsidian**: 保存至 `$OBSIDIAN_VAULT/PaperClaw/weekly/`
+6. **发送邮件**: 通过 Gmail SMTP 发送周报到指定邮箱
 
 ## 使用方法
 
@@ -154,47 +109,36 @@ python skills/weekly-report/scripts/generate_weekly_report_v2.py
 ```
 
 ### 在 Agent 中调用
-```python
-# 在 surrogate-modeling-expert agent 中执行
-生成三维几何代理模型研究周报
+```
+生成人形机器人全身控制与感知控制研究周报
 ```
 
 ## 配置说明
 
-### 知识库配置
+### 邮件配置（.env 文件）
 
-编辑周报生成脚本：
-
-```python
-# 知识库配置
-self.ku_repo_id = "your_repository_guid"  # 你的知识库ID
-self.ku_parent_doc_id = "your_parent_doc_guid"  # 你的父文档ID
-```
-
-### 如流消息接收人
-
-编辑周报生成脚本：
-
-```python
-# 如流消息接收人
-self.recipients = ["username1", "username2"]  # 替换为你的用户名
+```bash
+EMAIL_SENDER=your_gmail@gmail.com
+EMAIL_APP_PASSWORD="xxxx xxxx xxxx xxxx"  # Gmail 应用专用密码
+EMAIL_RECIPIENT=recipient1@example.com,recipient2@example.com  # 支持多收件人
+OBSIDIAN_VAULT=/path/to/your/obsidian/vault
 ```
 
 ### Cron 定时任务
 
-每周日早上 10 点自动生成并发送周报：
+每周五早上 10 点自动生成并发送周报：
 
 ```json
 {
-  "name": "Weekly Report - Surrogate Modeling",
+  "name": "Weekly Report - Humanoid Robot Control",
   "schedule": {
     "kind": "cron",
-    "expr": "0 10 * * 0",
+    "expr": "0 10 * * 5",
     "tz": "Asia/Shanghai"
   },
   "payload": {
     "kind": "agentTurn",
-    "message": "生成三维几何代理模型研究周报，创建知识库文档并发送给指定用户"
+    "message": "生成人形机器人全身控制与感知控制研究周报，并发送邮件给指定用户"
   },
   "sessionTarget": "isolated"
 }
@@ -203,18 +147,22 @@ self.recipients = ["username1", "username2"]  # 替换为你的用户名
 ## 注意事项
 
 1. **数据源**：周报必须从 `evaluated_papers.json` 读取，确保数据一致性
-2. **评分系统**：使用四维评分系统（工程应用、架构创新、理论贡献、可靠性）
+2. **评分系统**：使用四维评分系统（控制性能、架构创新、理论贡献、可靠性）
 3. **评分公式**：`最终综合评分 = 四维基础评分 × 0.9 + 影响力评分 × 0.1`
-4. **知识库文档**：
-   - 每篇精选论文创建独立的知识库文档（包含完整总结）
-   - 周报文档的附录只包含知识库链接
-5. **如流消息**：发送简短摘要 + 周报链接 + 论文总结链接
-6. **权限要求**：需要 `COMATE_AUTH_TOKEN` 环境变量用于知识库API认证
+4. **邮件发送**：通过 Gmail SMTP 将完整周报发送到指定邮箱（支持多收件人）
+5. **Obsidian 同步**：自动保存至 Obsidian vault，需配置 `OBSIDIAN_VAULT` 环境变量
 
 ## 更新日志
 
+### v3.0 (2026-03-05)
+- ✅ 研究领域切换为人形机器人全身控制与感知控制
+- ✅ 新增 Obsidian 周报同步
+- ✅ 支持多收件人邮件发送
+- ✅ 自动加载 .env 配置文件
+
 ### v2.0 (2026-03-01)
 - ✅ 添加知识库文档创建功能
-- ✅ 周报推送包含知识库链接
 - ✅ 优化消息格式，避免过长
-- ✅ **重要更新**：精选论文完整总结单独创建知识库文档，周报附录只包含链接
+
+### v1.0
+- ✅ 初始版本：周报生成与邮件发送

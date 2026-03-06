@@ -33,68 +33,33 @@ nano .env
 
 ### 环境变量列表
 
-#### 必需变量
-
-| 变量名 | 说明 | 示例 |
-|-------|------|------|
-| `BAIDU_API_KEY` | 百度智能云 API Key | `bce-v3/ALTAK-xxx` |
-| `COMATE_AUTH_TOKEN` | Comate 认证 Token | `Bearer-eyJ0eXAiOiJKV1QiLCJhbGc...` |
-
 #### 可选变量
 
 | 变量名 | 说明 | 示例 |
 |-------|------|------|
 | `SERPAPI_KEY` | SerpAPI Key（Google Scholar） | `89c2a9d42175eab6076128d63919085a...` |
-| `BAIDU_MAP_AK` | 百度地图 Access Key | `your_baidu_map_ak_here` |
+| `SEMANTIC_SCHOLAR_API_KEY` | Semantic Scholar API Key | `your_key_here` |
 
 ### 获取 API Key
-
-#### BAIDU_API_KEY
-
-1. 访问 https://cloud.baidu.com/
-2. 登录百度账号
-3. 进入控制台
-4. 创建应用
-5. 获取 API Key
-
-**用途**：
-- 百度学术搜索
-- 百度百科
-- 百度搜索
-
-#### COMATE_AUTH_TOKEN
-
-1. 联系你的百度内部管理员
-2. 或从现有的百度内部工具中获取
-3. Token 格式：`Bearer-eyJ0eXAiOiJKV1QiLCJhbGc...`
-
-**用途**：
-- 百度知识库 API
-- 如流消息 API
 
 #### SERPAPI_KEY（可选）
 
 1. 访问 https://serpapi.com/
 2. 注册账号
 3. 进入控制台
-4. 获取 API Key
+4. 获取 API Key（免费套餐 100次/月）
 
 **用途**：
 - Google Scholar 搜索
 - 学术引用数据
 
-#### BAIDU_MAP_AK（可选）
+#### SEMANTIC_SCHOLAR_API_KEY（可选）
 
-1. 访问 https://lbsyun.baidu.com/
-2. 登录百度账号
-3. 创建应用
-4. 选择 Web 服务 API
-5. 获取 AK（Access Key）
+1. 访问 https://www.semanticscholar.org/product/api
+2. 注册并申请免费 API Key
 
 **用途**：
-- 百度地图服务
-- 地点搜索
-- 天气查询
+- 提高 Semantic Scholar API 速率限制（默认 1次/秒，有 key 后更高）
 
 ### 环境变量优先级
 
@@ -103,149 +68,6 @@ nano .env
 1. 系统环境变量（`export VAR=value`）
 2. `.env` 文件
 3. 默认值（代码中硬编码）
-
----
-
-## 知识库配置
-
-### 配置文件位置
-
-编辑周报生成脚本：
-
-```bash
-~/.openclaw/agents/surrogate-modeling-expert/skills/weekly-report/scripts/generate_weekly_report_v2.py
-```
-
-### 配置项
-
-```python
-# 知识库配置
-self.ku_repo_id = "your_repository_guid"  # 知识库ID
-self.ku_parent_doc_id = "your_parent_doc_guid"  # 父文档ID
-```
-
-### 获取知识库 ID
-
-1. 访问百度知识库 https://ku.baidu-int.com/
-2. 进入你的知识库
-3. 查看浏览器地址栏
-4. URL 格式：
-   ```
-   https://ku.baidu-int.com/knowledge/HFVrC7hq1Q/pKzJfZczuc/qv-vZnw7HE/jnGipY319RaSyz
-   ```
-
-**URL 解析**：
-- `HFVrC7hq1Q` - spaceGuid（空间ID，URL使用）
-- `pKzJfZczuc` - groupGuid（群组ID，URL使用）
-- `qv-vZnw7HE` - repositoryGuid（知识库ID，API调用使用）
-- `jnGipY319RaSyz` - parent_doc_guid（父文档ID，API调用使用）
-
-**重要说明**：
-- API 调用只需要 `repositoryGuid` 和 `parent_doc_guid`
-- URL 中的 `spaceGuid` 和 `groupGuid` 不用于 API 调用
-
-### 知识库 API 调用示例
-
-```python
-from ku_api_client import KuApiClient
-
-client = KuApiClient()
-
-# 创建文档
-result = client.create_doc(
-    repository_guid="qv-vZnw7HE",  # 知识库ID
-    creator_username="guhaohao",    # 创建者用户名
-    title="文档标题",
-    content="文档内容",
-    parent_doc_guid="jnGipK319RaSyz",  # 父文档ID
-    create_mode=2
-)
-```
-
-### 知识库文档结构
-
-```
-知识库根目录
-└── PaperAgent: Surrogate-Modeling Weekly Report (jnGipY319RaSyz)
-    ├── 2026-03-02 周报
-    ├── 2026-03-02 DeepONet - 论文总结
-    ├── 2026-03-02 FNO - 论文总结
-    └── 2026-03-02 CViT - 论文总结
-```
-
----
-
-## 如流消息配置
-
-### 配置文件位置
-
-编辑周报生成脚本：
-
-```bash
-~/.openclaw/agents/surrogate-modeling-expert/skills/weekly-report/scripts/generate_weekly_report_v2.py
-```
-
-### 配置项
-
-```python
-# 如流消息接收人
-self.recipients = ["username1", "username2"]
-```
-
-### 获取如流用户名
-
-1. 登录如流 https://so.baidu-int.com/
-2. 查看个人资料
-3. 用户名通常是拼音或工号
-
-**示例**：
-- `guhaohao`（拼音）
-- `12345678`（工号）
-
-**注意**：
-- 用户名不是邮箱
-- 用户名区分大小写
-- 多个用户名用逗号分隔
-
-### 如流消息格式
-
-```python
-message = f"""
-📊 **三维几何代理模型研究周报** - {report_date}
-
-**报告周期**: {week_start} - {report_date}
-**评估论文总数**: {len(week_papers)}
-**精选推荐**: Top 3 精选论文
-
-🏆 **本周Top 3论文**:
-1. [论文1] - 评分: X.XX
-2. [论文2] - 评分: X.XX
-3. [论文3] - 评分: X.XX
-
-📎 **周报链接**: {doc_url}
-
-📄 **精选论文完整总结**:
-1. [论文1](链接1)
-2. [论文2](链接2)
-3. [论文3](链接3)
-"""
-```
-
-### 如流消息发送示例
-
-```python
-from send_message import GroupMessageSender
-
-sender = GroupMessageSender()
-
-result = sender.send_app_message(
-    to_users="guhaohao|hesensen",  # 多个用户用 | 分隔
-    msg_type="text",
-    content=message
-)
-
-print(result)
-```
 
 ---
 
@@ -680,39 +502,9 @@ TOP_PAPERS_TO_SELECT = 3  # 精选论文数量
 ### 验证环境变量
 
 ```bash
-# 检查环境变量
-echo $BAIDU_API_KEY
-echo $COMATE_AUTH_TOKEN
-
-# 或查看 .env 文件
-cat ~/.openclaw/.env
-```
-
-### 验证知识库配置
-
-```python
-from ku_api_client import KuApiClient
-
-client = KuApiClient()
-result = client.get_doc(
-    repository_guid="your_repository_guid",
-    doc_guid="your_parent_doc_guid"
-)
-print(result)
-```
-
-### 验证如流消息配置
-
-```python
-from send_message import GroupMessageSender
-
-sender = GroupMessageSender()
-result = sender.send_app_message(
-    to_users="your_username",
-    msg_type="text",
-    content="测试消息：PaperAgent 配置正常"
-)
-print(result)
+# 检查环境变量（可选）
+echo $SERPAPI_KEY
+echo $SEMANTIC_SCHOLAR_API_KEY
 ```
 
 ### 验证定时任务

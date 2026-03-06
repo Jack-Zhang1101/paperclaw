@@ -25,32 +25,33 @@ import xml.etree.ElementTree as ET
 import json
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 # ==================== 预设配置 ====================
 
-# 核心关键词：聚焦3D几何代理模型和PDE求解
+# 核心关键词：聚焦人形机器人全身控制与感知控制
 ADVANCED_QUERIES = [
-    "ti:geometry AND (ti:neural OR ti:operator OR ti:pde)",
-    "ti:mesh AND (ti:neural OR ti:deep OR ti:learning)",
-    "(ti:cfd OR ti:fluid) AND (ti:surrogate OR ti:neural OR ti:deep)",
-    "ti:3d AND (ti:pde OR ti:physics OR ti:solver)",
-    "(ti:fno OR ti:deeponet OR ti:\"neural operator\") AND (ti:geometry OR ti:mesh OR ti:domain)",
-    "(ti:pressure OR ti:stress OR ti:flow) AND (ti:neural OR ti:deep OR ti:surrogate)",
-    "(ti:aerodynamic OR ti:structural) AND (ti:surrogate OR ti:neural)",
-    "ti:\"graph neural\" AND (ti:pde OR ti:physics OR ti:simulation)",
-    "ti:transformer AND (ti:pde OR ti:physics OR ti:fluid)",
+    "ti:humanoid AND (ti:control OR ti:locomotion OR ti:manipulation)",
+    "ti:humanoid AND (ti:learning OR ti:policy OR ti:planning)",
+    "(ti:whole-body OR ti:\"whole body\") AND (ti:control OR ti:motion OR ti:robot)",
+    "(ti:bipedal OR ti:legged) AND (ti:control OR ti:locomotion OR ti:learning)",
+    "ti:humanoid AND (ti:perception OR ti:vision OR ti:sensing)",
+    "(ti:loco-manipulation OR ti:\"loco manipulation\") AND ti:robot",
+    "(ti:sim-to-real OR ti:\"sim to real\") AND (ti:humanoid OR ti:legged)",
+    "ti:humanoid AND (ti:reinforcement OR ti:imitation OR ti:diffusion)",
+    "(ti:teleoperation OR ti:\"motion retargeting\") AND ti:humanoid",
 ]
 
 # 排除关键词：避免不相关领域
 EXCLUDE_KEYWORDS = [
-    "epidemic", "epidemiology", "disease modeling", "disease",
+    "epidemic", "epidemiology", "disease modeling",
     "population dynamics", "social network",
     "finance", "economics", "stock", "trading",
-    "nlp", "language model", "text", "sentiment",
+    "nlp", "language model", "text generation", "sentiment",
     "drug", "protein", "molecule", "chemistry",
-    "medical", "clinical", "patient"
+    "medical", "clinical", "patient",
+    "autonomous driving", "self-driving",
 ]
 
 
@@ -194,35 +195,37 @@ def score_paper_relevance(paper):
     
     score = 0
     
-    # 核心关键词（高权重）
-    geometry_keywords = ['3d geometry', '3d mesh', 'unstructured mesh', 'geometry-aware', 
-                        'complex geometry', 'arbitrary geometry']
-    for kw in geometry_keywords:
+    # 核心关键词（高权重）：人形机器人控制
+    humanoid_keywords = ['humanoid', 'humanoid robot', 'bipedal robot', 'full-body control',
+                         'whole-body control', 'whole body control']
+    for kw in humanoid_keywords:
         if kw in title: score += 15
         if kw in summary: score += 5
-    
-    operator_keywords = ['neural operator', 'deep operator', 'operator learning', 
-                        'deeponet', 'fourier neural operator', 'fno']
-    for kw in operator_keywords:
+
+    locomotion_keywords = ['locomotion', 'loco-manipulation', 'loco manipulation',
+                           'legged robot', 'bipedal locomotion', 'agile locomotion']
+    for kw in locomotion_keywords:
         if kw in title: score += 12
         if kw in summary: score += 4
-    
-    pde_keywords = ['pde solver', 'neural pde', 'pde surrogate', 'physics-informed',
-                   'pinn', 'partial differential']
-    for kw in pde_keywords:
+
+    perception_keywords = ['perception-action', 'visual-motor', 'sensorimotor',
+                           'egocentric', 'proprioception', 'tactile sensing',
+                           'vision-based control', 'multimodal perception']
+    for kw in perception_keywords:
         if kw in title: score += 10
         if kw in summary: score += 3
-    
+
     # 应用场景关键词（中高权重）
-    application_keywords = ['cfd', 'fluid dynamics', 'aerodynamics', 'pressure field',
-                           'stress field', 'heat transfer', 'structural mechanics']
+    application_keywords = ['sim-to-real', 'sim to real', 'teleoperation',
+                            'motion retargeting', 'contact-rich', 'manipulation',
+                            'parkour', 'dexterous']
     for kw in application_keywords:
         if kw in title: score += 8
         if kw in summary: score += 3
-    
+
     # 技术关键词（中权重）
-    tech_keywords = ['transformer', 'graph neural network', 'gnn', 'pointnet',
-                    'attention', 'equivariant']
+    tech_keywords = ['reinforcement learning', 'imitation learning', 'diffusion policy',
+                     'transformer', 'model predictive control', 'mpc']
     for kw in tech_keywords:
         if kw in title: score += 5
         if kw in summary: score += 2
@@ -233,29 +236,64 @@ def score_paper_relevance(paper):
     
     if any(word in summary for word in ['code', 'github', 'implementation', 'open source']):
         score += 3
-    
+
+    # 时间加分：越新分越高（近6个月+5，近1年+3，近2年+1）
+    try:
+        pub_str = paper.get('published', '')
+        if pub_str:
+            pub_date = datetime.fromisoformat(pub_str.replace('Z', '+00:00').replace('+00:00', ''))
+            age_days = (datetime.now() - pub_date).days
+            if age_days <= 180:
+                score += 5
+            elif age_days <= 365:
+                score += 3
+            elif age_days <= 730:
+                score += 1
+    except Exception:
+        pass
+
     return max(score, 0)
 
 
-def batch_search(max_results_per_query=30, delay=3):
-    """使用预设关键词批量搜索"""
+def filter_recent_papers(papers, years=2):
+    """过滤近N年的论文"""
+    cutoff = datetime.now() - timedelta(days=365 * years)
+    recent = []
+    skipped = 0
+    for paper in papers:
+        try:
+            pub_date = datetime.fromisoformat(paper['published'].replace('Z', '+00:00').replace('+00:00', ''))
+            if pub_date >= cutoff:
+                recent.append(paper)
+            else:
+                skipped += 1
+        except Exception:
+            recent.append(paper)  # 解析失败则保留
+    if skipped:
+        print(f"    (过滤掉 {skipped} 篇 {years} 年前的旧论文)")
+    return recent
+
+
+def batch_search(max_results_per_query=30, delay=3, recent_years=2):
+    """使用预设关键词批量搜索，默认只保留近2年论文"""
     all_papers = []
-    
-    print(f"📚 开始批量搜索，共 {len(ADVANCED_QUERIES)} 个查询...")
+
+    print(f"📚 开始批量搜索，共 {len(ADVANCED_QUERIES)} 个查询（近 {recent_years} 年）...")
     print("=" * 60)
-    
+
     for i, query in enumerate(ADVANCED_QUERIES, 1):
         print(f"[{i}/{len(ADVANCED_QUERIES)}] 搜索: {query[:60]}...")
         papers = search_arxiv(query, max_results_per_query)
+        papers = filter_recent_papers(papers, years=recent_years)
         print(f"    找到 {len(papers)} 篇论文")
         all_papers.extend(papers)
-        
+
         if i < len(ADVANCED_QUERIES):
             time.sleep(delay)  # 避免请求过快
-    
+
     print("=" * 60)
     print(f"📊 总计收集 {len(all_papers)} 篇论文（去重前）")
-    
+
     return all_papers
 
 
