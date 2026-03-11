@@ -30,8 +30,8 @@ from datetime import datetime, timedelta
 
 # ==================== 预设配置 ====================
 
-# 核心关键词：聚焦人形机器人全身控制与感知控制
-ADVANCED_QUERIES = [
+# 核心关键词：人形机器人主题
+HUMANOID_QUERIES = [
     "ti:humanoid AND (ti:control OR ti:locomotion OR ti:manipulation)",
     "ti:humanoid AND (ti:learning OR ti:policy OR ti:planning)",
     "(ti:whole-body OR ti:\"whole body\") AND (ti:control OR ti:motion OR ti:robot)",
@@ -41,6 +41,18 @@ ADVANCED_QUERIES = [
     "(ti:sim-to-real OR ti:\"sim to real\") AND (ti:humanoid OR ti:legged)",
     "ti:humanoid AND (ti:reinforcement OR ti:imitation OR ti:diffusion)",
     "(ti:teleoperation OR ti:\"motion retargeting\") AND ti:humanoid",
+]
+
+# 核心关键词：四足机器人主题
+QUADRUPED_QUERIES = [
+    "ti:quadruped AND (ti:control OR ti:locomotion OR ti:navigation)",
+    "ti:quadruped AND (ti:learning OR ti:policy OR ti:planning)",
+    "(ti:legged OR ti:\"legged robot\") AND (ti:locomotion OR ti:gait OR ti:control)",
+    "(ti:quadruped OR ti:legged) AND (ti:perception OR ti:vision OR ti:sensing)",
+    "(ti:terrain OR ti:rough) AND (ti:locomotion OR ti:legged OR ti:quadruped)",
+    "(ti:sim-to-real OR ti:\"sim to real\") AND (ti:quadruped OR ti:legged)",
+    "(ti:reinforcement OR ti:imitation OR ti:diffusion) AND (ti:quadruped OR ti:legged)",
+    "(ti:state estimation OR ti:state-estimation) AND (ti:quadruped OR ti:legged)",
 ]
 
 # 排除关键词：避免不相关领域
@@ -81,6 +93,18 @@ def is_excluded(paper):
         if keyword.lower() in text:
             return True, keyword
     return False, None
+
+
+def get_theme_queries(theme="mixed"):
+    """根据主题返回预设查询列表"""
+    if theme == "humanoid":
+        return HUMANOID_QUERIES
+    if theme == "quadruped":
+        return QUADRUPED_QUERIES
+    if theme == "mixed":
+        # 保持顺序去重，避免重复查询
+        return list(dict.fromkeys(HUMANOID_QUERIES + QUADRUPED_QUERIES))
+    raise ValueError(f"未知主题: {theme}")
 
 
 def search_arxiv(query, max_results=30):
@@ -155,7 +179,7 @@ def deduplicate_papers(papers):
             continue
         
         # 检查重复
-        if arxiv_id in seen_ids:
+        if arxiv_id and arxiv_id in seen_ids:
             duplicates.append({
                 'title': paper['title'],
                 'arxiv_id': arxiv_id,
@@ -181,7 +205,8 @@ def deduplicate_papers(papers):
         
         # 添加到唯一列表
         unique_papers.append(paper)
-        seen_ids.add(arxiv_id)
+        if arxiv_id:
+            seen_ids.add(arxiv_id)
         seen_titles.add(paper['title'])
         seen_normalized.add(normalized_title)
     
@@ -195,10 +220,16 @@ def score_paper_relevance(paper):
     
     score = 0
     
-    # 核心关键词（高权重）：人形机器人控制
+    # 核心关键词（高权重）：人形 / 四足控制
     humanoid_keywords = ['humanoid', 'humanoid robot', 'bipedal robot', 'full-body control',
                          'whole-body control', 'whole body control']
     for kw in humanoid_keywords:
+        if kw in title: score += 15
+        if kw in summary: score += 5
+
+    quadruped_keywords = ['quadruped', 'quadruped robot', 'legged robot', 'quadrupedal',
+                          'gait control', 'gait planning']
+    for kw in quadruped_keywords:
         if kw in title: score += 15
         if kw in summary: score += 5
 
@@ -274,21 +305,22 @@ def filter_recent_papers(papers, years=2):
     return recent
 
 
-def batch_search(max_results_per_query=30, delay=3, recent_years=2):
+def batch_search(max_results_per_query=30, delay=3, recent_years=2, theme="mixed"):
     """使用预设关键词批量搜索，默认只保留近2年论文"""
     all_papers = []
+    queries = get_theme_queries(theme)
 
-    print(f"📚 开始批量搜索，共 {len(ADVANCED_QUERIES)} 个查询（近 {recent_years} 年）...")
+    print(f"📚 开始批量搜索，主题: {theme}，共 {len(queries)} 个查询（近 {recent_years} 年）...")
     print("=" * 60)
 
-    for i, query in enumerate(ADVANCED_QUERIES, 1):
-        print(f"[{i}/{len(ADVANCED_QUERIES)}] 搜索: {query[:60]}...")
+    for i, query in enumerate(queries, 1):
+        print(f"[{i}/{len(queries)}] 搜索: {query[:60]}...")
         papers = search_arxiv(query, max_results_per_query)
         papers = filter_recent_papers(papers, years=recent_years)
         print(f"    找到 {len(papers)} 篇论文")
         all_papers.extend(papers)
 
-        if i < len(ADVANCED_QUERIES):
+        if i < len(queries):
             time.sleep(delay)  # 避免请求过快
 
     print("=" * 60)
@@ -306,6 +338,9 @@ def main():
     parser.add_argument("--limit", type=int, default=30, help="每个查询的最大结果数")
     parser.add_argument("--top", type=int, default=0, help="按相关性输出 Top N 论文")
     parser.add_argument("--delay", type=int, default=3, help="批量搜索时的请求间隔（秒）")
+    parser.add_argument("--theme", type=str, default="mixed",
+                        choices=["humanoid", "quadruped", "mixed"],
+                        help="批量搜索主题（默认 mixed）")
     parser.add_argument("--output", type=str, help="输出 JSON 文件路径")
     parser.add_argument("--verbose", action="store_true", help="显示详细信息")
     
@@ -317,7 +352,7 @@ def main():
     
     # 执行搜索
     if args.batch:
-        all_papers = batch_search(args.limit, args.delay)
+        all_papers = batch_search(args.limit, args.delay, theme=args.theme)
     else:
         print(f"🔍 搜索: {args.query}")
         all_papers = search_arxiv(args.query, args.limit)

@@ -87,7 +87,7 @@ cp -r skills/* ~/.openclaw/agents/surrogate-modeling-expert/skills/
   },
   "payload": {
     "kind": "agentTurn",
-    "message": "执行每日论文检索任务：检索人形机器人全身控制与感知控制领域的最新论文，然后对精选的 Top 3 论文执行完整的 paper-review 流程（阅读论文、撰写 summary.md、四维评分 scores.md、更新 evaluated_papers.json），最后运行以下命令发送深度评估邮件：\n\npython3 /data-ssd/zhang/paper_writing/PaperClaw/skills/daily-search/scripts/daily_paper_search.py --workspace ~/.paperclaw/workspace --send-evaluation",
+    "message": "执行每日论文检索任务：默认从 Semantic Scholar 检索人形机器人全身控制与感知控制领域的最新论文，并过滤 tro, icra, ral, iros, science_robotics, ijrr；必要时再切回 arXiv。然后对精选的 Top 3 论文执行完整的 paper-review 流程（阅读论文、撰写 summary.md、四维评分 scores.md、更新 evaluated_papers.json），最后运行以下命令发送深度评估邮件：\n\npython3 /data-ssd/zhang/paper_writing/PaperClaw/skills/daily-search/scripts/daily_paper_search.py --workspace ~/.paperclaw/workspace --send-evaluation",
     "timeoutSeconds": 1800
   },
   "sessionTarget": "isolated",
@@ -150,7 +150,7 @@ crontab -e
 ```
 09:00  OpenClaw cron 触发 Agent
          ↓
-       daily_paper_search.py          # 搜索 arXiv（近2年）→ 筛选 Top 3 → 下载 PDF → 生成 Obsidian 日报
+       daily_paper_search.py          # 多来源检索（arXiv / Semantic Scholar）→ 筛选 Top 3 → 下载 PDF → 生成 Obsidian 日报
          ↓
        Agent paper-review × 3         # 阅读 PDF → summary.md + scores.md → 更新 evaluated_papers.json
          ↓
@@ -190,6 +190,21 @@ crontab -e
 执行每日论文检索任务：检索人形机器人全身控制与感知控制领域的最新论文，然后对精选的 Top 3 论文执行完整的 paper-review 流程（阅读论文、撰写 summary.md、四维评分 scores.md、更新 evaluated_papers.json），最后运行以下命令发送深度评估邮件：
 
 python3 /data-ssd/zhang/paper_writing/PaperClaw/skills/daily-search/scripts/daily_paper_search.py --workspace ~/.paperclaw/workspace --send-evaluation
+```
+
+### 手动测试多来源检索
+
+```bash
+# 默认 Semantic Scholar
+python3 /data-ssd/zhang/paper_writing/PaperClaw/skills/daily-search/scripts/daily_paper_search.py \
+  --workspace ~/.paperclaw/workspace \
+  --top 3
+
+# 显式切回 arXiv
+python3 /data-ssd/zhang/paper_writing/PaperClaw/skills/daily-search/scripts/daily_paper_search.py \
+  --workspace ~/.paperclaw/workspace \
+  --source arxiv \
+  --top 3
 ```
 
 ### 手动触发周报（在 TUI 中发送，或直接运行脚本）

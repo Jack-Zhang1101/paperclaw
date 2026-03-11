@@ -143,24 +143,27 @@ class DailyEvaluationMailer:
         if not self.obsidian_daily_dir:
             print("⚠️  未配置 OBSIDIAN_VAULT，跳过 Obsidian 同步")
             return None
+        try:
+            self.obsidian_daily_dir.mkdir(parents=True, exist_ok=True)
+            obsidian_path = self.obsidian_daily_dir / f"{date_str}.md"
 
-        self.obsidian_daily_dir.mkdir(parents=True, exist_ok=True)
-        obsidian_path = self.obsidian_daily_dir / f"{date_str}.md"
+            # 完整内容（不截断 summary）
+            content = self.build_evaluation_content(papers_data, date_str, truncate_summary=False)
 
-        # 完整内容（不截断 summary）
-        content = self.build_evaluation_content(papers_data, date_str, truncate_summary=False)
+            # 若日报文件已存在（由 daily_paper_search.py 创建），追加评估内容
+            if obsidian_path.exists():
+                with open(obsidian_path, "a", encoding="utf-8") as f:
+                    f.write(f"\n\n---\n\n## 📊 深度评估结果\n\n")
+                    f.write(content)
+            else:
+                with open(obsidian_path, "w", encoding="utf-8") as f:
+                    f.write(content)
 
-        # 若日报文件已存在（由 daily_paper_search.py 创建），追加评估内容
-        if obsidian_path.exists():
-            with open(obsidian_path, "a", encoding="utf-8") as f:
-                f.write(f"\n\n---\n\n## 📊 深度评估结果\n\n")
-                f.write(content)
-        else:
-            with open(obsidian_path, "w", encoding="utf-8") as f:
-                f.write(content)
-
-        print(f"✅ 深度评估已同步到 Obsidian: {obsidian_path}")
-        return obsidian_path
+            print(f"✅ 深度评估已同步到 Obsidian: {obsidian_path}")
+            return obsidian_path
+        except Exception as e:
+            print(f"⚠️  Obsidian 同步失败，继续发送邮件: {e}")
+            return None
 
     def send(self, date_str, dry_run=False):
         """主流程：读取今日评估结果并发送邮件"""

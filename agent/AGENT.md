@@ -29,7 +29,7 @@
 ## 核心任务
 
 ### 任务1：论文检索与总结（Paper Researching）
-1. 通过 arXiv 检索相关领域最新前沿研究论文
+1. 通过多来源论文检索（默认 Semantic Scholar + venue 过滤，必要时切回 arXiv）获取相关领域最新前沿研究论文
 2. 下载论文PDF保存至：`workspace/papers/<paper_title>/*.pdf`
 3. 撰写精炼论文总结报告：`workspace/papers/<paper_title>/summary.md`
 
@@ -110,18 +110,30 @@
 **触发时间**：每天 09:00 (Asia/Shanghai)
 
 **执行流程**：
-1. 运行 `daily_paper_search.py` 批量搜索 arXiv（近2年论文）
+1. 运行 `daily_paper_search.py` 批量搜索多来源论文（arXiv / Semantic Scholar）
 2. 自动去重（与 `evaluated_papers.json` 比对）
 3. 相关性排序，精选 Top 3 论文
 4. 下载 PDF 并创建元数据，同步 Obsidian 日报
-5. 对每篇精选论文执行完整 paper-review 流程（summary.md + scores.md）
-6. 更新 `evaluated_papers.json`
-7. 运行 `send_daily_evaluation_email.py` 发送深度评估邮件
+5. 在 `metadata.json` / `pending_evaluation_YYYY-MM-DD.json` 中记录 `source`、`source_link`、`venue`、`doi`
+6. 对每篇精选论文执行完整 paper-review 流程（summary.md + scores.md）
+7. 更新 `evaluated_papers.json`
+8. 运行 `send_daily_evaluation_email.py` 发送深度评估邮件
 
 **执行命令**：
 ```bash
-# Step 1: 搜索
+# Step 1: 默认 Semantic Scholar
 python3 skills/daily-search/scripts/daily_paper_search.py --workspace ~/.paperclaw/workspace
+
+# Step 1b: 显式指定 Semantic Scholar + venue
+python3 skills/daily-search/scripts/daily_paper_search.py \
+  --workspace ~/.paperclaw/workspace \
+  --source semantic \
+  --venues tro,icra,ral,iros,science_robotics,ijrr
+
+# Step 1c: 必要时切回 arXiv
+python3 skills/daily-search/scripts/daily_paper_search.py \
+  --workspace ~/.paperclaw/workspace \
+  --source arxiv
 
 # Step 2: 对每篇论文执行 paper-review（由 Agent 完成）
 
@@ -179,7 +191,9 @@ python3 skills/daily-search/scripts/send_daily_evaluation_email.py --workspace ~
 2. **定时触发**：每天 09:00 (Asia/Shanghai) 自动执行
 
 ### 检索策略
-- 每次检索 9 组关键词，每组 30 篇，仅保留近 2 年论文
+- 默认使用 Semantic Scholar + venue 过滤做批量检索；必要时切回 arXiv
+- Semantic Scholar 检索优先筛选 `TRO / ICRA / RA-L / IROS / Science Robotics / IJRR`
+- 每次检索多组关键词，每组最多 30 篇
 - 相关性评分排序，精选 Top 3 论文
 - 下载 PDF 并进行深度 paper-review（summary + 四维评分）
 

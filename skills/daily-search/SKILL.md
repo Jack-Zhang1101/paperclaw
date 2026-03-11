@@ -1,7 +1,7 @@
 # Daily Paper Search Skill
 
 ## 功能描述
-每日自动检索 arXiv 最新论文，聚焦**人形机器人全身控制与感知控制**领域，与已评估数据库去重，精选 Top N 论文待评估，发送每日检索摘要。
+每日自动检索多来源论文，聚焦**人形机器人全身控制与感知控制**领域，与已评估数据库去重，精选 Top N 论文待评估，发送每日检索摘要。
 
 ## 研究领域关键词
 
@@ -51,7 +51,7 @@
 ┌─────────────────────────────────────────────────────────────┐
 │  09:00 Asia/Shanghai 自动触发                               │
 │       ↓                                                     │
-│  1. 批量搜索 arXiv (预设关键词，每组30篇)                   │
+│  1. 批量搜索多来源论文 (arXiv / Semantic Scholar)          │
 │       ↓                                                     │
 │  2. 搜索结果去重 (ID + 标准化标题)                          │
 │       ↓                                                     │
@@ -78,11 +78,19 @@
 ### 手动执行
 
 ```bash
-# 完整流程（搜索 + 下载 + 发送消息）
+# 完整流程（默认 Semantic Scholar）
 python skills/daily-search/scripts/daily_paper_search.py
 
 # 精选 5 篇论文（默认 3 篇）
 python skills/daily-search/scripts/daily_paper_search.py --top 5
+
+# 显式使用 Semantic Scholar 检索，并按 robotics venue 过滤
+python skills/daily-search/scripts/daily_paper_search.py \
+  --source semantic \
+  --venues tro,icra,ral,iros,science_robotics,ijrr
+
+# 显式切回 arXiv
+python skills/daily-search/scripts/daily_paper_search.py --source arxiv
 
 # 仅搜索，不下载 PDF
 python skills/daily-search/scripts/daily_paper_search.py --skip-download
@@ -96,6 +104,10 @@ python skills/daily-search/scripts/daily_paper_search.py --dry-run
 | 参数 | 说明 |
 |------|------|
 | `--top N` | 精选论文数量（默认 3） |
+| `--source {arxiv,semantic}` | 论文来源，默认 `semantic` |
+| `--venues V1,V2` | `source=semantic` 时按 venue 过滤 |
+| `--theme {humanoid,quadruped,mixed}` | 检索主题，默认 `mixed` |
+| `--limit-per-query N` | 每个查询返回的最大论文数 |
 | `--skip-download` | 跳过 PDF 下载 |
 | `--dry-run` | 干跑模式，仅搜索不执行实际操作 |
 | `--workspace PATH` | 指定工作空间路径 |
@@ -108,7 +120,7 @@ python skills/daily-search/scripts/daily_paper_search.py --dry-run
 |------|------|------|
 | 搜索日志 | `search_logs/YYYY-MM-DD_search_log.json` | 当日搜索统计和去重详情 |
 | 待评估清单 | `pending_evaluation_YYYY-MM-DD.json` | Agent 待执行的评估任务 |
-| 论文元数据 | `papers/{short_title}/metadata.json` | 每篇精选论文的基础信息 |
+| 论文元数据 | `papers/{short_title}/metadata.json` | 每篇精选论文的基础信息，包含 `source` / `source_link` / `venue` / `doi` |
 | 论文 PDF | `papers/{short_title}/*.pdf` | 下载的论文 PDF |
 | Obsidian 日报 | `$OBSIDIAN_VAULT/PaperClaw/daily/YYYY-MM-DD.md` | 同步到 Obsidian |
 
@@ -166,7 +178,7 @@ python skills/daily-search/scripts/send_daily_evaluation_email.py \
 邮件内容包含：
 - 每篇论文的完整总结（`summary.md`）
 - 四维评分详情（`scores.md`）
-- arXiv 链接
+- 论文来源链接（优先 arXiv，其次 DOI / PDF）
 
 ## 定时任务配置
 
@@ -184,7 +196,7 @@ python skills/daily-search/scripts/send_daily_evaluation_email.py \
   },
   "payload": {
     "kind": "agentTurn",
-    "message": "执行每日论文检索任务：检索人形机器人全身控制与感知控制领域的最新论文，然后对精选的 Top 3 论文执行完整的 paper-review 流程（总结、评分、更新数据库）"
+    "message": "执行每日论文检索任务：优先从多来源（arXiv / Semantic Scholar）检索人形机器人全身控制与感知控制领域的最新论文，然后对精选的 Top 3 论文执行完整的 paper-review 流程（总结、评分、更新数据库）"
   },
   "sessionTarget": "isolated"
 }
@@ -197,7 +209,7 @@ python skills/daily-search/scripts/send_daily_evaluation_email.py \
 crontab -e
 
 # 添加定时任务 (09:00 Asia/Shanghai = 01:00 UTC)
-0 1 * * * cd /path/to/PaperClaw && python skills/daily-search/scripts/daily_paper_search.py >> /var/log/daily_paper_search.log 2>&1
+0 1 * * * cd /path/to/PaperClaw && python skills/daily-search/scripts/daily_paper_search.py --source semantic --venues tro,icra,ral,iros,science_robotics,ijrr >> /var/log/daily_paper_search.log 2>&1
 ```
 
 ## 去重机制说明
@@ -220,12 +232,17 @@ crontab -e
 
 ## 注意事项
 
-1. **API 限制**: arXiv API 有请求频率限制，脚本已设置 3 秒延迟
+1. **API 限制**: arXiv API 与 Semantic Scholar API 都有限流，脚本已支持请求间隔
 2. **网络依赖**: PDF 下载和邮件发送需要网络连接
 3. **评估时间**: 深度评估每篇论文需要 Agent 投入时间，建议每日精选 3 篇
 4. **存储空间**: PDF 文件会占用存储空间，定期清理旧论文
 
 ## 更新日志
+
+### v2.1 (2026-03-10)
+- ✅ 新增多来源检索（arXiv + Semantic Scholar）
+- ✅ 新增 venue 定向筛选参数
+- ✅ 搜索产物记录来源、链接、venue、doi
 
 ### v2.0 (2026-03-05)
 - ✅ 研究领域切换为人形机器人全身控制与感知控制

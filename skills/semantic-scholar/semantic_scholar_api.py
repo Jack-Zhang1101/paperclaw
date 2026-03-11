@@ -24,9 +24,10 @@ from urllib.parse import quote
 
 import requests
 
-# 配置
+# 配置 - 支持环境变量覆盖
 API_BASE_URL = "https://api.semanticscholar.org/graph/v1"
-CACHE_DIR = Path("/home/gem/.openclaw/workspace/3d_surrogate_proj/cache/semantic_scholar")
+DEFAULT_CACHE_DIR = "/home/gem/.openclaw/workspace/3d_surrogate_proj/cache/semantic_scholar"
+CACHE_DIR = Path(os.environ.get("SEMANTIC_SCHOLAR_CACHE_DIR", DEFAULT_CACHE_DIR))
 CACHE_EXPIRY_DAYS = {
     "paper": 7,
     "author": 30,

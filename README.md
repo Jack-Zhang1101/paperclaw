@@ -1,6 +1,6 @@
 # PaperClaw - Surrogate Modeling Expert
 
-An OpenClaw Agent that automatically searches, reviews, and critiques arXiv papers relevant to Scientific ML and 3D geometry surrogate modeling.
+An OpenClaw Agent that automatically searches, reviews, and critiques papers from arXiv and Semantic Scholar for humanoid and legged robot control research.
 
 <div align="center">
 
@@ -18,7 +18,7 @@ An OpenClaw Agent that automatically searches, reviews, and critiques arXiv pape
 
 | 功能 | 说明 | 触发方式 |
 |------|------|---------|
-| 🔍 **每日检索** | 批量搜索 arXiv，自动去重，精选 Top 3 | 每天 20:00 (Asia/Singapore) |
+| 🔍 **每日检索** | 多来源检索（arXiv + Semantic Scholar），自动去重，精选 Top 3 | 每天 20:00 (Asia/Singapore) |
 | 📝 **深度总结** | 回答 10 个核心问题，生成 summary.md | 检索后自动执行 |
 | 📊 **四维评分** | 工程应用 + 架构创新 + 理论贡献 + 可靠性 | 总结后自动执行 |
 | ?? **周报生成** | Top 3 精选论文报告，如流消息推送 | 每周日 10:00 |
@@ -51,8 +51,13 @@ An OpenClaw Agent that automatically searches, reviews, and critiques arXiv pape
 ### 1. 每日检索（自动）
 
 ```bash
-# 手动触发
+# 默认从 Semantic Scholar 检索，并按 robotics venue 过滤
 python skills/daily-search/scripts/daily_paper_search.py --top 3
+
+# 显式切回 arXiv 检索
+python skills/daily-search/scripts/daily_paper_search.py \
+  --source arxiv \
+  --top 3
 
 # 定时任务已配置：每天 20:00 (Asia/Singapore) 自动执行
 ```
@@ -105,7 +110,7 @@ PaperClaw/
 │   ├── daily-search/     # 每日检索技能 (NEW)
 │   ├── arxiv-search/     # arXiv 搜索脚本
 │   ├── paper-review/     # 论文评估 + 安全写入
-│   ├── semantic-scholar/ # 引用数据 API
+│   ├── semantic-scholar/ # Semantic Scholar 检索与引用数据 API
 │   └── weekly-report/    # 周报生成脚本
 └── examples/             # 示例数据
 ```
@@ -113,6 +118,17 @@ PaperClaw/
 ---
 
 ## 🔄 更新日志
+
+### v1.2.0 (2026-03-10) - 论文来源增广
+
+**🚀 新增功能**
+- ✅ **多来源论文检索**：`daily_paper_search.py` 支持 `--source arxiv|semantic`
+- ✅ **Venue 定向筛选**：Semantic Scholar 可按 `TRO / ICRA / RA-L / IROS / Science Robotics / IJRR` 过滤
+- ✅ **来源元数据落盘**：`metadata.json` / `search_log` / `pending_evaluation` 记录 `source`、`source_link`、`venue`、`doi`
+
+**📝 文档更新**
+- ✅ 将“仅 arXiv”说明更新为“多来源检索”
+- ✅ 补充 Semantic Scholar 检索用法与参数示例
 
 ### v1.1.0 (2026-03-04) - 架构优化与每日任务
 
